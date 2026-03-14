@@ -28,7 +28,7 @@ An autonomous "think-act" loop for [Claude Code](https://claude.com/claude-code)
              └──── loop ────► back to Thinker
 ```
 
-The thinker checks `.ralph-ideas/` for context on what previous rounds proposed, and saves each new idea there as well.
+Full JSON output from each thinker and worker is saved in `.ralph/` (e.g. `round-001-thinker.json`, `round-001-worker.json`). The thinker checks this folder for context on what previous rounds proposed.
 
 If the project folder is a git repository, changes are automatically committed and pushed after each round. Non-git folders skip this step.
 
@@ -60,7 +60,6 @@ Press `Ctrl-C` to stop at any time.
 | `--max-rounds N`        | unlimited   | Stop after N rounds                      |
 | `--backend claude|codex`| `claude`    | LLM backend to use                       |
 
-The Claude thinker and committer are each capped at $0.50 per turn.
 
 ## License
 

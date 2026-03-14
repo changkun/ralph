@@ -52,12 +52,12 @@ FOLDER="$(cd "$FOLDER" && pwd)"  # resolve to absolute path
 
 ROUND=0
 
-THINKER_PROMPT='Look at this project and propose exactly ONE goal to achieve next. State the goal clearly and concisely. Check the .ralph-ideas/ folder for context on what has been tried before.'
+THINKER_PROMPT='Look at this project and propose exactly ONE goal to achieve next. State the goal clearly and concisely.'
 
 WORKER_SYSTEM='Implement the following task. Make the changes directly and summarize what you changed when done.'
 
-IDEAS_DIR="$FOLDER/.ralph-ideas"
-mkdir -p "$IDEAS_DIR"
+RALPH_DIR="$FOLDER/.ralph"
+mkdir -p "$RALPH_DIR"
 
 # --- Backend-specific runners ---
 
@@ -67,10 +67,8 @@ run_claude_thinker() {
         --dangerously-skip-permissions \
         --output-format json \
         --max-turns 3 \
-        --max-budget-usd 0.50 \
         "$prompt" \
-        2>/dev/null \
-        | jq -r '.result // empty'
+        2>/dev/null
 }
 
 run_claude_worker() {
@@ -79,10 +77,8 @@ run_claude_worker() {
         --dangerously-skip-permissions \
         --output-format json \
         --append-system-prompt "$WORKER_SYSTEM" \
-
         "$prompt" \
-        2>/dev/null \
-        | jq -r '.result // empty'
+        2>/dev/null
 }
 
 run_codex_thinker() {
@@ -95,8 +91,11 @@ run_codex_thinker() {
         -o "$tmpfile" \
         "$prompt" \
         2>/dev/null || true
-    cat "$tmpfile"
+    # Wrap in JSON to match claude format
+    local text
+    text=$(cat "$tmpfile")
     rm -f "$tmpfile"
+    jq -n --arg r "$text" '{result: $r}'
 }
 
 run_codex_worker() {
@@ -108,8 +107,11 @@ run_codex_worker() {
         -o "$tmpfile" \
         "$prompt" \
         2>/dev/null || true
-    cat "$tmpfile"
+    # Wrap in JSON to match claude format
+    local text
+    text=$(cat "$tmpfile")
     rm -f "$tmpfile"
+    jq -n --arg r "$text" '{result: $r}'
 }
 
 run_thinker() {
@@ -131,7 +133,7 @@ run_worker() {
 cleanup() {
     echo ""
     echo "=== Ralph loop stopped after $ROUND rounds ==="
-    echo "Ideas saved to: $IDEAS_DIR"
+    echo "Logs saved to: $RALPH_DIR"
     exit 0
 }
 trap cleanup INT TERM
@@ -155,7 +157,11 @@ while [[ "$MAX_ROUNDS" -eq 0 ]] || [[ "$ROUND" -lt "$MAX_ROUNDS" ]]; do
     echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 
     # Step 1: Thinker — analyze the folder and propose one task
-    IDEA=$(run_thinker "$THINKER_PROMPT") || true
+    ROUND_PREFIX="$RALPH_DIR/round-$(printf '%03d' $ROUND)"
+    THINKER_RAW=$(run_thinker "$THINKER_PROMPT") || true
+    echo "$THINKER_RAW" > "${ROUND_PREFIX}-thinker.json"
+
+    IDEA=$(echo "$THINKER_RAW" | jq -r '.result // empty')
 
     if [ -z "$IDEA" ]; then
         echo "[!] Thinker produced no output. Retrying in 5s..."
@@ -167,9 +173,6 @@ while [[ "$MAX_ROUNDS" -eq 0 ]] || [[ "$ROUND" -lt "$MAX_ROUNDS" ]]; do
     echo "$IDEA"
     echo ""
 
-    # Save the idea to .ralph-ideas/ so future thinkers can see it
-    echo "$IDEA" > "$IDEAS_DIR/round-$(printf '%03d' $ROUND).md"
-
     echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
     echo "  Round $ROUND — Working..."
     echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
@@ -180,7 +183,10 @@ while [[ "$MAX_ROUNDS" -eq 0 ]] || [[ "$ROUND" -lt "$MAX_ROUNDS" ]]; do
 Here is your task to execute in this project ($FOLDER):
 
 $IDEA"
-    RESULT=$(run_worker "$WORKER_PROMPT") || true
+    WORKER_RAW=$(run_worker "$WORKER_PROMPT") || true
+    echo "$WORKER_RAW" > "${ROUND_PREFIX}-worker.json"
+
+    RESULT=$(echo "$WORKER_RAW" | jq -r '.result // empty')
 
     if [ -z "$RESULT" ]; then
         echo "[!] Worker produced no output."
@@ -207,7 +213,6 @@ Context from the worker: $RESULT"
                     --dangerously-skip-permissions \
                     --output-format json \
                     --max-turns 5 \
-                    --max-budget-usd 0.50 \
                     --append-system-prompt "You are a git committer. Stage all changes, write a clear commit message with a summary title and description body explaining what was changed, then push." \
                     "$COMMIT_PROMPT" \
                     2>/dev/null \
