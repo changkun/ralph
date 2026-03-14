@@ -52,7 +52,7 @@ FOLDER="$(cd "$FOLDER" && pwd)"  # resolve to absolute path
 
 ROUND=0
 
-THINKER_PROMPT='Look at this project and propose exactly ONE goal to achieve next. State the goal clearly and concisely.'
+THINKER_PROMPT='Look at this project and propose exactly ONE goal to achieve next. State the goal clearly and concisely. If the project is empty or has no code yet, decide on your own what to build — pick a concrete, interesting project idea and propose it as your goal. Do NOT ask the user what to build.'
 
 WORKER_SYSTEM='Implement the following task. Make the changes directly and summarize what you changed when done.'
 
