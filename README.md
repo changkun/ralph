@@ -59,7 +59,6 @@ Press `Ctrl-C` to stop at any time.
 |-------------------------|-------------|------------------------------------------|
 | `--max-rounds N`        | unlimited   | Stop after N rounds                      |
 | `--backend claude|codex`| `claude`    | LLM backend to use                       |
-| `MAX_BUDGET_PER_TURN`   | `1.00`      | Max USD spend per worker turn (Claude)   |
 
 The Claude thinker and committer are each capped at $0.50 per turn.
 

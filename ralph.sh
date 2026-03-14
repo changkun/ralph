@@ -51,7 +51,6 @@ FOLDER="${1:?Usage: $0 [--backend claude|codex] [--max-rounds N] <folder>}"
 FOLDER="$(cd "$FOLDER" && pwd)"  # resolve to absolute path
 
 ROUND=0
-MAX_BUDGET_PER_TURN="${MAX_BUDGET_PER_TURN:-1.00}"  # dollars, per worker turn (claude only)
 
 THINKER_PROMPT='Look at this project and propose exactly ONE goal to achieve next. State the goal clearly and concisely. Check the .ralph-ideas/ folder for context on what has been tried before.'
 
@@ -80,7 +79,7 @@ run_claude_worker() {
         --dangerously-skip-permissions \
         --output-format json \
         --append-system-prompt "$WORKER_SYSTEM" \
-        --max-budget-usd "$MAX_BUDGET_PER_TURN" \
+
         "$prompt" \
         2>/dev/null \
         | jq -r '.result // empty'
@@ -142,9 +141,7 @@ trap cleanup INT TERM
 echo "=== Ralph loop starting ==="
 echo "Backend: $BACKEND"
 echo "Folder: $FOLDER"
-if [[ "$BACKEND" == "claude" ]]; then
-    echo "Budget per worker turn: \$${MAX_BUDGET_PER_TURN}"
-fi
+
 if [[ "$MAX_ROUNDS" -gt 0 ]]; then
     echo "Max rounds: $MAX_ROUNDS"
 fi
