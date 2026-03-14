@@ -1,43 +1,128 @@
 #!/usr/bin/env bash
 #
-# ralph.sh — Run Claude Code in a "think → act" loop.
+# ralph.sh — Run Claude Code or OpenAI Codex in a "think → act" loop.
 #
 # Usage:
-#   ./ralph.sh <folder>
+#   ./ralph.sh [--backend claude|codex] <folder>
 #
 # Requirements:
-#   - claude CLI installed and authenticated via OAuth (run `claude auth login` first)
 #   - jq installed
+#   - For claude backend: claude CLI authenticated via OAuth (`claude auth login`)
+#   - For codex backend: codex CLI installed and CODEX_API_KEY set
 #
 # How it works:
-#   1. A "thinker" Claude looks at the folder and proposes one concrete task.
-#   2. A "worker" Claude executes that task.
+#   1. A "thinker" instance looks at the folder and proposes one concrete task.
+#   2. A "worker" instance executes that task.
 #   3. Loop back to step 1. The thinker sees the updated state and picks the next task.
 #   Press Ctrl-C to stop.
 
 set -euo pipefail
 
-FOLDER="${1:?Usage: $0 <folder>}"
+# --- Parse arguments ---
+BACKEND="claude"
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --backend)
+            BACKEND="$2"
+            shift 2
+            ;;
+        -*)
+            echo "Unknown option: $1" >&2
+            echo "Usage: $0 [--backend claude|codex] <folder>" >&2
+            exit 1
+            ;;
+        *)
+            break
+            ;;
+    esac
+done
+
+if [[ "$BACKEND" != "claude" && "$BACKEND" != "codex" ]]; then
+    echo "Error: backend must be 'claude' or 'codex', got '$BACKEND'" >&2
+    exit 1
+fi
+
+FOLDER="${1:?Usage: $0 [--backend claude|codex] <folder>}"
 FOLDER="$(cd "$FOLDER" && pwd)"  # resolve to absolute path
 
 ROUND=0
-MAX_BUDGET_PER_TURN="${MAX_BUDGET_PER_TURN:-1.00}"  # dollars, per worker turn
+MAX_BUDGET_PER_TURN="${MAX_BUDGET_PER_TURN:-1.00}"  # dollars, per worker turn (claude only)
 
-THINKER_PROMPT='You are a code analyst. Look at the files in this project folder and think about what could be improved, fixed, or added.
+THINKER_PROMPT='Look at this project and decide what should be done next. Propose exactly ONE task as a clear objective for another engineer to execute. Be specific about which files to change and what the expected outcome is. Do not repeat previous ideas listed below.'
 
-Propose exactly ONE concrete, actionable task. Be specific: name the files, describe the change, and explain why.
-
-Rules:
-- Only propose something that can be done with the files in this directory.
-- Do NOT propose the same thing twice (check the log below for previous ideas).
-- If the project looks complete and well-structured, propose a small but meaningful improvement.
-- Keep your response under 300 words.
-- Start your response with "TASK:" followed by a one-line summary, then explain the details below.'
-
-WORKER_SYSTEM='You are a software engineer. Execute the task described in the prompt. Make the changes directly — do not ask for confirmation. When done, briefly summarize what you changed.'
+WORKER_SYSTEM='Implement the following task. Make the changes directly and summarize what you changed when done.'
 
 LOGFILE="$FOLDER/.ralph-log"
 touch "$LOGFILE"
+
+# --- Backend-specific runners ---
+
+run_claude_thinker() {
+    local prompt="$1"
+    claude -p \
+        --dangerously-skip-permissions \
+        --output-format json \
+        --max-turns 3 \
+        --max-budget-usd 0.50 \
+        "$prompt" \
+        2>/dev/null \
+        | jq -r '.result // empty'
+}
+
+run_claude_worker() {
+    local prompt="$1"
+    claude -p \
+        --dangerously-skip-permissions \
+        --output-format json \
+        --append-system-prompt "$WORKER_SYSTEM" \
+        --max-budget-usd "$MAX_BUDGET_PER_TURN" \
+        "$prompt" \
+        2>/dev/null \
+        | jq -r '.result // empty'
+}
+
+run_codex_thinker() {
+    local prompt="$1"
+    local tmpfile
+    tmpfile=$(mktemp)
+    codex exec \
+        --full-auto \
+        --ephemeral \
+        -o "$tmpfile" \
+        "$prompt" \
+        2>/dev/null || true
+    cat "$tmpfile"
+    rm -f "$tmpfile"
+}
+
+run_codex_worker() {
+    local prompt="$1"
+    local tmpfile
+    tmpfile=$(mktemp)
+    codex exec \
+        --full-auto \
+        -o "$tmpfile" \
+        "$prompt" \
+        2>/dev/null || true
+    cat "$tmpfile"
+    rm -f "$tmpfile"
+}
+
+run_thinker() {
+    case "$BACKEND" in
+        claude) run_claude_thinker "$1" ;;
+        codex)  run_codex_thinker "$1" ;;
+    esac
+}
+
+run_worker() {
+    case "$BACKEND" in
+        claude) run_claude_worker "$1" ;;
+        codex)  run_codex_worker "$1" ;;
+    esac
+}
+
+# --- Cleanup ---
 
 cleanup() {
     echo ""
@@ -47,9 +132,14 @@ cleanup() {
 }
 trap cleanup INT TERM
 
+# --- Main loop ---
+
 echo "=== Ralph loop starting ==="
+echo "Backend: $BACKEND"
 echo "Folder: $FOLDER"
-echo "Budget per worker turn: \$${MAX_BUDGET_PER_TURN}"
+if [[ "$BACKEND" == "claude" ]]; then
+    echo "Budget per worker turn: \$${MAX_BUDGET_PER_TURN}"
+fi
 echo "Press Ctrl-C to stop."
 echo ""
 
@@ -69,14 +159,7 @@ $(cat "$LOGFILE")"
     fi
 
     # Step 1: Thinker — analyze the folder and propose one task
-    IDEA=$(claude -p \
-        --dangerously-skip-permissions \
-        --output-format json \
-        --max-turns 3 \
-        --max-budget-usd 0.50 \
-        "${THINKER_PROMPT}${PREVIOUS_IDEAS}" \
-        2>/dev/null \
-        | jq -r '.result // empty') || true
+    IDEA=$(run_thinker "${THINKER_PROMPT}${PREVIOUS_IDEAS}") || true
 
     if [ -z "$IDEA" ]; then
         echo "[!] Thinker produced no output. Retrying in 5s..."
@@ -97,16 +180,12 @@ $(cat "$LOGFILE")"
     echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 
     # Step 2: Worker — execute the task
-    RESULT=$(claude -p \
-        --dangerously-skip-permissions \
-        --output-format json \
-        --append-system-prompt "$WORKER_SYSTEM" \
-        --max-budget-usd "$MAX_BUDGET_PER_TURN" \
-        "Here is your task to execute in this project ($FOLDER):
+    WORKER_PROMPT="$WORKER_SYSTEM
 
-$IDEA" \
-        2>/dev/null \
-        | jq -r '.result // empty') || true
+Here is your task to execute in this project ($FOLDER):
+
+$IDEA"
+    RESULT=$(run_worker "$WORKER_PROMPT") || true
 
     if [ -z "$RESULT" ]; then
         echo "[!] Worker produced no output."
