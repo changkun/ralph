@@ -63,22 +63,20 @@ mkdir -p "$RALPH_DIR"
 
 run_claude_thinker() {
     local prompt="$1"
-    claude -p \
+    (cd "$FOLDER" && claude -p \
         --dangerously-skip-permissions \
         --output-format json \
         --max-turns 3 \
-        "$prompt" \
-        2>/dev/null
+        "$prompt")
 }
 
 run_claude_worker() {
     local prompt="$1"
-    claude -p \
+    (cd "$FOLDER" && claude -p \
         --dangerously-skip-permissions \
         --output-format json \
         --append-system-prompt "$WORKER_SYSTEM" \
-        "$prompt" \
-        2>/dev/null
+        "$prompt")
 }
 
 run_codex_thinker() {
@@ -209,13 +207,12 @@ Context from the worker: $RESULT"
 
         case "$BACKEND" in
             claude)
-                claude -p \
+                (cd "$FOLDER" && claude -p \
                     --dangerously-skip-permissions \
                     --output-format json \
                     --max-turns 5 \
                     --append-system-prompt "You are a git committer. Stage all changes, write a clear commit message with a summary title and description body explaining what was changed, then push." \
-                    "$COMMIT_PROMPT" \
-                    2>/dev/null \
+                    "$COMMIT_PROMPT") \
                     | jq -r '.result // empty' || true
                 ;;
             codex)
