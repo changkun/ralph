@@ -8,7 +8,7 @@ An autonomous "think-act" loop for [Claude Code](https://claude.com/claude-code)
 ┌─────────────────────────────┐
 │  Thinker                    │
 │  Analyzes the project,      │
-│  proposes one goal           │
+│  proposes one goal          │
 └────────────┬────────────────┘
              │
              ▼
