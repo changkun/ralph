@@ -48,12 +48,12 @@ FOLDER="$(cd "$FOLDER" && pwd)"  # resolve to absolute path
 ROUND=0
 MAX_BUDGET_PER_TURN="${MAX_BUDGET_PER_TURN:-1.00}"  # dollars, per worker turn (claude only)
 
-THINKER_PROMPT='Look at this project and decide what should be done next. Propose exactly ONE task as a clear objective for another engineer to execute. Be specific about which files to change and what the expected outcome is. Do not repeat previous ideas listed below.'
+THINKER_PROMPT='Look at this project and propose exactly ONE goal to achieve next. State the goal clearly and concisely. Check the .ralph-ideas/ folder for context on what has been tried before.'
 
 WORKER_SYSTEM='Implement the following task. Make the changes directly and summarize what you changed when done.'
 
-LOGFILE="$FOLDER/.ralph-log"
-touch "$LOGFILE"
+IDEAS_DIR="$FOLDER/.ralph-ideas"
+mkdir -p "$IDEAS_DIR"
 
 # --- Backend-specific runners ---
 
@@ -127,7 +127,7 @@ run_worker() {
 cleanup() {
     echo ""
     echo "=== Ralph loop stopped after $ROUND rounds ==="
-    echo "Log saved to: $LOGFILE"
+    echo "Ideas saved to: $IDEAS_DIR"
     exit 0
 }
 trap cleanup INT TERM
@@ -149,17 +149,8 @@ while true; do
     echo "  Round $ROUND — Thinking..."
     echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 
-    # Build context with previous ideas so the thinker doesn't repeat itself
-    PREVIOUS_IDEAS=""
-    if [ -s "$LOGFILE" ]; then
-        PREVIOUS_IDEAS="
-
-Previous ideas (do NOT repeat these):
-$(cat "$LOGFILE")"
-    fi
-
     # Step 1: Thinker — analyze the folder and propose one task
-    IDEA=$(run_thinker "${THINKER_PROMPT}${PREVIOUS_IDEAS}") || true
+    IDEA=$(run_thinker "$THINKER_PROMPT") || true
 
     if [ -z "$IDEA" ]; then
         echo "[!] Thinker produced no output. Retrying in 5s..."
@@ -171,9 +162,8 @@ $(cat "$LOGFILE")"
     echo "$IDEA"
     echo ""
 
-    # Log the idea
-    TASK_SUMMARY=$(echo "$IDEA" | head -1)
-    echo "Round $ROUND: $TASK_SUMMARY" >> "$LOGFILE"
+    # Save the idea to .ralph-ideas/ so future thinkers can see it
+    echo "$IDEA" > "$IDEAS_DIR/round-$(printf '%03d' $ROUND).md"
 
     echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
     echo "  Round $ROUND — Working..."
@@ -195,8 +185,47 @@ $IDEA"
         echo ""
     fi
 
-    echo ""
-    echo "--- Round $ROUND complete ---"
+    # Step 3: Auto-commit and push if there are changes (only in git repos)
+    if git -C "$FOLDER" rev-parse --is-inside-work-tree >/dev/null 2>&1 \
+       && [ -n "$(git -C "$FOLDER" status --porcelain 2>/dev/null)" ]; then
+        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+        echo "  Round $ROUND — Committing..."
+        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+
+        COMMIT_PROMPT="Look at the current git diff (staged and unstaged) and untracked files in this repository. Create a commit that includes ALL changes with a clear, descriptive commit message explaining what changed and why. Then push to the remote.
+
+Context from the worker: $RESULT"
+
+        case "$BACKEND" in
+            claude)
+                claude -p \
+                    --dangerously-skip-permissions \
+                    --output-format json \
+                    --max-turns 5 \
+                    --max-budget-usd 0.50 \
+                    --append-system-prompt "You are a git committer. Stage all changes, write a clear commit message with a summary title and description body explaining what was changed, then push." \
+                    "$COMMIT_PROMPT" \
+                    2>/dev/null \
+                    | jq -r '.result // empty' || true
+                ;;
+            codex)
+                COMMIT_TMPFILE=$(mktemp)
+                codex exec \
+                    --full-auto \
+                    -o "$COMMIT_TMPFILE" \
+                    "$COMMIT_PROMPT" \
+                    2>/dev/null || true
+                cat "$COMMIT_TMPFILE"
+                rm -f "$COMMIT_TMPFILE"
+                ;;
+        esac
+
+        echo ""
+        echo "--- Round $ROUND committed and pushed ---"
+    else
+        echo "--- Round $ROUND complete ---"
+    fi
+
     echo ""
     sleep 2
 done
