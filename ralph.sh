@@ -86,9 +86,10 @@ run_codex_thinker() {
     codex exec \
         --full-auto \
         --ephemeral \
+        -C "$FOLDER" \
         -o "$tmpfile" \
         "$prompt" \
-        2>/dev/null || true
+        >/dev/null 2>&1 || true
     # Wrap in JSON to match claude format
     local text
     text=$(cat "$tmpfile")
@@ -102,9 +103,10 @@ run_codex_worker() {
     tmpfile=$(mktemp)
     codex exec \
         --full-auto \
+        -C "$FOLDER" \
         -o "$tmpfile" \
         "$prompt" \
-        2>/dev/null || true
+        >/dev/null 2>&1 || true
     # Wrap in JSON to match claude format
     local text
     text=$(cat "$tmpfile")
@@ -219,9 +221,10 @@ Context from the worker: $RESULT"
                 COMMIT_TMPFILE=$(mktemp)
                 codex exec \
                     --full-auto \
+                    -C "$FOLDER" \
                     -o "$COMMIT_TMPFILE" \
                     "$COMMIT_PROMPT" \
-                    2>/dev/null || true
+                    >/dev/null 2>&1 || true
                 cat "$COMMIT_TMPFILE"
                 rm -f "$COMMIT_TMPFILE"
                 ;;
