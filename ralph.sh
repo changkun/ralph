@@ -3,7 +3,7 @@
 # ralph.sh — Run Claude Code or OpenAI Codex in a "think → act" loop.
 #
 # Usage:
-#   ./ralph.sh [--backend claude|codex] <folder>
+#   ./ralph.sh [--backend claude|codex] [--max-rounds N] <folder>
 #
 # Requirements:
 #   - jq installed
@@ -20,15 +20,20 @@ set -euo pipefail
 
 # --- Parse arguments ---
 BACKEND="claude"
+MAX_ROUNDS=0  # 0 = unlimited
 while [[ $# -gt 0 ]]; do
     case "$1" in
         --backend)
             BACKEND="$2"
             shift 2
             ;;
+        --max-rounds)
+            MAX_ROUNDS="$2"
+            shift 2
+            ;;
         -*)
             echo "Unknown option: $1" >&2
-            echo "Usage: $0 [--backend claude|codex] <folder>" >&2
+            echo "Usage: $0 [--backend claude|codex] [--max-rounds N] <folder>" >&2
             exit 1
             ;;
         *)
@@ -42,7 +47,7 @@ if [[ "$BACKEND" != "claude" && "$BACKEND" != "codex" ]]; then
     exit 1
 fi
 
-FOLDER="${1:?Usage: $0 [--backend claude|codex] <folder>}"
+FOLDER="${1:?Usage: $0 [--backend claude|codex] [--max-rounds N] <folder>}"
 FOLDER="$(cd "$FOLDER" && pwd)"  # resolve to absolute path
 
 ROUND=0
@@ -140,10 +145,13 @@ echo "Folder: $FOLDER"
 if [[ "$BACKEND" == "claude" ]]; then
     echo "Budget per worker turn: \$${MAX_BUDGET_PER_TURN}"
 fi
+if [[ "$MAX_ROUNDS" -gt 0 ]]; then
+    echo "Max rounds: $MAX_ROUNDS"
+fi
 echo "Press Ctrl-C to stop."
 echo ""
 
-while true; do
+while [[ "$MAX_ROUNDS" -eq 0 ]] || [[ "$ROUND" -lt "$MAX_ROUNDS" ]]; do
     ROUND=$((ROUND + 1))
     echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
     echo "  Round $ROUND — Thinking..."

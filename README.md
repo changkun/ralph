@@ -41,20 +41,25 @@ If the project folder is a git repository, changes are automatically committed a
 ## Usage
 
 ```bash
-# Using Claude Code (default)
+# Using Claude Code (default), runs until Ctrl-C
 ./ralph.sh /path/to/project
 
 # Using OpenAI Codex
 ./ralph.sh --backend codex /path/to/project
+
+# Limit to 5 rounds
+./ralph.sh --max-rounds 5 /path/to/project
 ```
 
-Press `Ctrl-C` to stop.
+Press `Ctrl-C` to stop at any time.
 
 ## Configuration
 
-| Environment variable    | Default   | Description                              |
-|-------------------------|-----------|------------------------------------------|
-| `MAX_BUDGET_PER_TURN`   | `1.00`    | Max USD spend per worker turn (Claude)   |
+| Flag / Variable         | Default     | Description                              |
+|-------------------------|-------------|------------------------------------------|
+| `--max-rounds N`        | unlimited   | Stop after N rounds                      |
+| `--backend claude|codex`| `claude`    | LLM backend to use                       |
+| `MAX_BUDGET_PER_TURN`   | `1.00`      | Max USD spend per worker turn (Claude)   |
 
 The Claude thinker and committer are each capped at $0.50 per turn.
 
