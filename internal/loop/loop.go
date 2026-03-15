@@ -25,6 +25,7 @@ func Run(ctx context.Context, be backend.Backend, folder, ralphDir string, round
 		if err != nil && ctx.Err() != nil {
 			return
 		}
+		os.MkdirAll(ralphDir, 0o755)
 		_ = os.WriteFile(prefix+"-thinker.json", thinkerRaw, 0o644)
 
 		idea := backend.ExtractResult(thinkerRaw)

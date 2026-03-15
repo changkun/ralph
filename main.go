@@ -64,9 +64,6 @@ func parseArgs(args []string) (config, error) {
 
 func run(ctx context.Context, cfg config, be backend.Backend) error {
 	ralphDir := filepath.Join(cfg.folder, ".ralph")
-	if err := os.MkdirAll(ralphDir, 0o755); err != nil {
-		return fmt.Errorf("cannot create .ralph directory: %w", err)
-	}
 	round := loop.ResumeRound(ralphDir)
 	fmt.Printf("=== Ralph loop starting ===\nBackend: %s\nFolder: %s\n", cfg.backendName, cfg.folder)
 	if round > 0 {
