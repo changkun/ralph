@@ -52,7 +52,7 @@ FOLDER="$(cd "$FOLDER" && pwd)"  # resolve to absolute path
 
 ROUND=0
 
-THINKER_PROMPT='Look at this project and propose exactly ONE goal to achieve next. State the goal clearly and concisely. If the project is empty or has no code yet, decide on your own what to build — pick a concrete, interesting project idea and propose it as your goal. Do NOT ask the user what to build.'
+THINKER_PROMPT='Look at this project and propose exactly ONE goal to achieve next. State the goal clearly and concisely. Be creative and stratigic if needed. If the project is empty or has no code yet, decide on your own what to build — pick a concrete, interesting project idea and propose it as your goal. Do NOT ask the user what to build.'
 
 WORKER_SYSTEM='Implement the following task. Make the changes directly and summarize what you changed when done.'
 
@@ -66,7 +66,6 @@ run_claude_thinker() {
     (cd "$FOLDER" && claude -p \
         --dangerously-skip-permissions \
         --output-format json \
-        --max-turns 3 \
         "$prompt")
 }
 
@@ -212,7 +211,6 @@ Context from the worker: $RESULT"
                 (cd "$FOLDER" && claude -p \
                     --dangerously-skip-permissions \
                     --output-format json \
-                    --max-turns 5 \
                     --append-system-prompt "You are a git committer. Stage all changes, write a clear commit message with a summary title and description body explaining what was changed, then push." \
                     "$COMMIT_PROMPT") \
                     | jq -r '.result // empty' || true
