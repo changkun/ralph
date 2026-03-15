@@ -128,6 +128,38 @@ func TestGitCommitErr(t *testing.T) {
 	Run(context.Background(), &mockBE{ok("idea"), ok("done"), fail()}, dir, rd, &r, 1)
 }
 
+func TestBuilderNormal(t *testing.T) {
+	dir, rd := setup(t)
+	r := 0
+	RunBuilder(context.Background(), &mockBE{nil, ok("built it"), nil}, dir, rd, &r, 1)
+	if r != 1 {
+		t.Errorf("round=%d", r)
+	}
+}
+
+func TestBuilderEmpty(t *testing.T) {
+	dir, rd := setup(t)
+	r := 0
+	RunBuilder(context.Background(), &mockBE{nil, ok(""), nil}, dir, rd, &r, 1)
+}
+
+func TestBuilderCancel(t *testing.T) {
+	dir, rd := setup(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	r := 0
+	RunBuilder(ctx, &mockBE{nil, fail(), nil}, dir, rd, &r, 0)
+}
+
+func TestResumeRoundBuilder(t *testing.T) {
+	dir := t.TempDir()
+	os.WriteFile(filepath.Join(dir, "round-001-builder.json"), []byte(`{}`), 0o644)
+	os.WriteFile(filepath.Join(dir, "round-002-builder.json"), []byte(`{}`), 0o644)
+	if r := ResumeRound(dir); r != 2 {
+		t.Errorf("builder rounds: got %d, want 2", r)
+	}
+}
+
 func TestResumeRound(t *testing.T) {
 	dir := t.TempDir()
 	if r := ResumeRound(dir); r != 0 {

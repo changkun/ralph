@@ -19,17 +19,21 @@ func TestParseArgs(t *testing.T) {
 		wantErr bool
 		be      string
 		rounds  int
+		pattern string
 	}{
-		{"default", []string{"/tmp"}, false, "claude", 0},
-		{"codex", []string{"--backend", "codex", "/tmp"}, false, "codex", 0},
-		{"rounds", []string{"--max-rounds", "5", "/tmp"}, false, "claude", 5},
-		{"no folder", []string{}, true, "", 0},
-		{"bad backend", []string{"--backend", "gpt", "/tmp"}, true, "", 0},
-		{"unknown flag", []string{"--foo"}, true, "", 0},
-		{"backend no val", []string{"--backend"}, true, "", 0},
-		{"rounds no val", []string{"--max-rounds"}, true, "", 0},
-		{"rounds bad", []string{"--max-rounds", "abc", "/tmp"}, true, "", 0},
-		{"rounds neg", []string{"--max-rounds", "-1", "/tmp"}, true, "", 0},
+		{"default", []string{"/tmp"}, false, "claude", 0, "think-act"},
+		{"codex", []string{"--backend", "codex", "/tmp"}, false, "codex", 0, "think-act"},
+		{"rounds", []string{"--max-rounds", "5", "/tmp"}, false, "claude", 5, "think-act"},
+		{"builder", []string{"--pattern", "builder", "/tmp"}, false, "claude", 0, "builder"},
+		{"no folder", []string{}, true, "", 0, ""},
+		{"bad backend", []string{"--backend", "gpt", "/tmp"}, true, "", 0, ""},
+		{"bad pattern", []string{"--pattern", "bad", "/tmp"}, true, "", 0, ""},
+		{"pattern no val", []string{"--pattern"}, true, "", 0, ""},
+		{"unknown flag", []string{"--foo"}, true, "", 0, ""},
+		{"backend no val", []string{"--backend"}, true, "", 0, ""},
+		{"rounds no val", []string{"--max-rounds"}, true, "", 0, ""},
+		{"rounds bad", []string{"--max-rounds", "abc", "/tmp"}, true, "", 0, ""},
+		{"rounds neg", []string{"--max-rounds", "-1", "/tmp"}, true, "", 0, ""},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -43,6 +47,9 @@ func TestParseArgs(t *testing.T) {
 				}
 				if cfg.maxRounds != tt.rounds {
 					t.Errorf("rounds=%d", cfg.maxRounds)
+				}
+				if cfg.pattern != tt.pattern {
+					t.Errorf("pattern=%q", cfg.pattern)
 				}
 			}
 		})
@@ -70,7 +77,14 @@ func (m *runMock) RunCommitter(_ context.Context, _ string, _ prompt.Prompt) (st
 var _ backend.Backend = (*runMock)(nil)
 
 func TestRun(t *testing.T) {
-	err := run(context.Background(), config{backendName: "claude", maxRounds: 1, folder: t.TempDir()}, &runMock{})
+	err := run(context.Background(), config{backendName: "claude", pattern: "think-act", maxRounds: 1, folder: t.TempDir()}, &runMock{})
+	if err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestRunBuilder(t *testing.T) {
+	err := run(context.Background(), config{backendName: "claude", pattern: "builder", maxRounds: 1, folder: t.TempDir()}, &runMock{})
 	if err != nil {
 		t.Fatal(err)
 	}

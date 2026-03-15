@@ -1,8 +1,8 @@
-// ralph — Run Claude Code or OpenAI Codex in a "think → act" loop.
+// ralph — Run Claude Code or OpenAI Codex autonomously.
 //
 // Usage:
 //
-//	ralph [--backend claude|codex] [--max-rounds N] <folder>
+//	ralph [--backend claude|codex] [--pattern think-act|builder] [--max-rounds N] <folder>
 package main
 
 import (
@@ -19,12 +19,13 @@ import (
 
 type config struct {
 	backendName string
+	pattern     string
 	maxRounds   int
 	folder      string
 }
 
 func parseArgs(args []string) (config, error) {
-	cfg := config{backendName: "claude"}
+	cfg := config{backendName: "claude", pattern: "think-act"}
 	for len(args) > 0 {
 		switch args[0] {
 		case "--backend":
@@ -32,6 +33,12 @@ func parseArgs(args []string) (config, error) {
 				return cfg, fmt.Errorf("--backend requires a value")
 			}
 			cfg.backendName = args[1]
+			args = args[2:]
+		case "--pattern":
+			if len(args) < 2 {
+				return cfg, fmt.Errorf("--pattern requires a value")
+			}
+			cfg.pattern = args[1]
 			args = args[2:]
 		case "--max-rounds":
 			if len(args) < 2 {
@@ -57,6 +64,9 @@ func parseArgs(args []string) (config, error) {
 	if cfg.backendName != "claude" && cfg.backendName != "codex" {
 		return cfg, fmt.Errorf("backend must be 'claude' or 'codex', got '%s'", cfg.backendName)
 	}
+	if cfg.pattern != "think-act" && cfg.pattern != "builder" {
+		return cfg, fmt.Errorf("pattern must be 'think-act' or 'builder', got '%s'", cfg.pattern)
+	}
 	var err error
 	cfg.folder, err = filepath.Abs(cfg.folder)
 	return cfg, err
@@ -65,7 +75,7 @@ func parseArgs(args []string) (config, error) {
 func run(ctx context.Context, cfg config, be backend.Backend) error {
 	ralphDir := filepath.Join(cfg.folder, ".ralph")
 	round := loop.ResumeRound(ralphDir)
-	fmt.Printf("=== Ralph loop starting ===\nBackend: %s\nFolder: %s\n", cfg.backendName, cfg.folder)
+	fmt.Printf("=== Ralph loop starting ===\nBackend: %s\nPattern: %s\nFolder: %s\n", cfg.backendName, cfg.pattern, cfg.folder)
 	if round > 0 {
 		fmt.Printf("Resuming from round %d\n", round)
 	}
@@ -74,7 +84,12 @@ func run(ctx context.Context, cfg config, be backend.Backend) error {
 	}
 	fmt.Println("Press Ctrl-C to stop.")
 	fmt.Println()
-	loop.Run(ctx, be, cfg.folder, ralphDir, &round, cfg.maxRounds)
+	switch cfg.pattern {
+	case "builder":
+		loop.RunBuilder(ctx, be, cfg.folder, ralphDir, &round, cfg.maxRounds)
+	default:
+		loop.Run(ctx, be, cfg.folder, ralphDir, &round, cfg.maxRounds)
+	}
 	return nil
 }
 
@@ -83,7 +98,7 @@ var osExit = os.Exit
 func realMain(args []string) int {
 	cfg, err := parseArgs(args)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error: %v\nUsage: ralph [--backend claude|codex] [--max-rounds N] <folder>\n", err)
+		fmt.Fprintf(os.Stderr, "Error: %v\nUsage: ralph [--backend claude|codex] [--pattern think-act|builder] [--max-rounds N] <folder>\n", err)
 		return 1
 	}
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt)

@@ -36,6 +36,16 @@ func TestCommitPrompt(t *testing.T) {
 	}
 }
 
+func TestBuilderPrompt(t *testing.T) {
+	p := BuilderPrompt("/tmp/project")
+	if !strings.Contains(p.User, "/tmp/project") {
+		t.Error("missing folder")
+	}
+	if p.System == "" {
+		t.Error("missing system prompt")
+	}
+}
+
 func TestRenderError(t *testing.T) {
 	at := agentTmpl{t: template.Must(template.New("bad").Parse(
 		`{{define "system"}}ok{{end}}{{define "prompt"}}{{.Missing.Field}}{{end}}`))}

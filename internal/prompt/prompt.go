@@ -44,6 +44,7 @@ var (
 	thinkerAgent   = loadAgent("thinker")
 	workerAgent    = loadAgent("worker")
 	committerAgent = loadAgent("committer")
+	builderAgent   = loadAgent("builder")
 )
 
 // ThinkerPrompt generates the thinker prompt.
@@ -59,4 +60,9 @@ func WorkerPrompt(folder, idea string) Prompt {
 // CommitPrompt formats the committer prompt with objective and worker result.
 func CommitPrompt(objective, workerResult string) Prompt {
 	return committerAgent.render(struct{ Objective, WorkerResult string }{objective, workerResult})
+}
+
+// BuilderPrompt generates the builder prompt with the project folder.
+func BuilderPrompt(folder string) Prompt {
+	return builderAgent.render(struct{ Folder string }{folder})
 }
