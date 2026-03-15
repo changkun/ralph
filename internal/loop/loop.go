@@ -6,9 +6,9 @@ import (
 	"os"
 	"path/filepath"
 
-	"changkun.de/ralph/internal/backend"
-	"changkun.de/ralph/internal/git"
-	"changkun.de/ralph/internal/prompt"
+	"github.com/changkun/ralph/internal/backend"
+	"github.com/changkun/ralph/internal/git"
+	"github.com/changkun/ralph/internal/prompt"
 )
 
 const separator = "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"

@@ -10,8 +10,8 @@ import (
 	"path/filepath"
 	"testing"
 
-	"changkun.de/ralph/internal/backend"
-	"changkun.de/ralph/internal/prompt"
+	"github.com/changkun/ralph/internal/backend"
+	"github.com/changkun/ralph/internal/prompt"
 )
 
 type mockBE struct {
@@ -128,7 +128,6 @@ func TestGitCommitErr(t *testing.T) {
 	Run(context.Background(), &mockBE{ok("idea"), ok("done"), fail()}, dir, rd, &r, 1)
 }
 
-
 func TestResumeRound(t *testing.T) {
 	dir := t.TempDir()
 	if r := ResumeRound(dir); r != 0 {
@@ -143,18 +142,5 @@ func TestResumeRound(t *testing.T) {
 	}
 	if r := ResumeRound("/nonexistent_ralph_test"); r != 0 {
 		t.Errorf("bad dir: got %d", r)
-	}
-}
-
-func TestPreviousIdeas(t *testing.T) {
-	dir := t.TempDir()
-	os.WriteFile(filepath.Join(dir, "round-001-thinker.json"), []byte(`{"result":"idea1"}`), 0o644)
-	os.WriteFile(filepath.Join(dir, "round-002-thinker.json"), []byte(`{"result":"idea2"}`), 0o644)
-	ideas := PreviousIdeas(dir, 3)
-	if len(ideas) != 2 {
-		t.Errorf("got %d ideas", len(ideas))
-	}
-	if ideas := PreviousIdeas(dir, 0); len(ideas) != 0 {
-		t.Errorf("got %d ideas for upTo=0", len(ideas))
 	}
 }

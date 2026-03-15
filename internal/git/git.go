@@ -22,12 +22,3 @@ func HasChanges(folder string) bool {
 	}
 	return len(strings.TrimSpace(string(out))) > 0
 }
-
-// LatestCommitHash returns the short hash of HEAD.
-func LatestCommitHash(folder string) string {
-	out, err := exec.Command("git", "-C", folder, "rev-parse", "--short", "HEAD").Output()
-	if err != nil {
-		return ""
-	}
-	return strings.TrimSpace(string(out))
-}

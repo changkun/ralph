@@ -47,16 +47,3 @@ func TestHasChangesNonGit(t *testing.T) {
 		t.Error("should return false")
 	}
 }
-
-func TestLatestCommitHash(t *testing.T) {
-	if h := LatestCommitHash("/nonexistent"); h != "" {
-		t.Errorf("got %q", h)
-	}
-	dir := initRepo(t)
-	os.WriteFile(filepath.Join(dir, "f.txt"), []byte("x"), 0o644)
-	exec.Command("git", "-C", dir, "add", ".").Run()
-	exec.Command("git", "-C", dir, "commit", "-m", "init").Run()
-	if h := LatestCommitHash(dir); h == "" {
-		t.Error("expected a hash")
-	}
-}

@@ -4,7 +4,7 @@ import (
 	"context"
 	"testing"
 
-	"changkun.de/ralph/internal/prompt"
+	"github.com/changkun/ralph/internal/prompt"
 )
 
 const codexScript = `while [ $# -gt 0 ]; do case "$1" in -o) echo "output" > "$2"; shift 2;; *) shift;; esac; done`

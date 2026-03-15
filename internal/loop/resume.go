@@ -3,11 +3,7 @@ package loop
 import (
 	"fmt"
 	"os"
-	"path/filepath"
-	"sort"
 	"strings"
-
-	"changkun.de/ralph/internal/backend"
 )
 
 // ResumeRound scans ralphDir for existing round files and returns the
@@ -29,20 +25,4 @@ func ResumeRound(ralphDir string) int {
 		}
 	}
 	return maxRound
-}
-
-// PreviousIdeas collects all thinker results from previous rounds for context.
-func PreviousIdeas(ralphDir string, upTo int) []string {
-	var ideas []string
-	for i := 1; i <= upTo; i++ {
-		data, err := os.ReadFile(filepath.Join(ralphDir, fmt.Sprintf("round-%03d-thinker.json", i)))
-		if err != nil {
-			continue
-		}
-		if idea := backend.ExtractResult(data); idea != "" {
-			ideas = append(ideas, idea)
-		}
-	}
-	sort.Strings(ideas)
-	return ideas
 }

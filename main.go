@@ -13,8 +13,8 @@ import (
 	"path/filepath"
 	"strings"
 
-	"changkun.de/ralph/internal/backend"
-	"changkun.de/ralph/internal/loop"
+	"github.com/changkun/ralph/internal/backend"
+	"github.com/changkun/ralph/internal/loop"
 )
 
 type config struct {

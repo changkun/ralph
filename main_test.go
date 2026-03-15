@@ -8,8 +8,8 @@ import (
 	"path/filepath"
 	"testing"
 
-	"changkun.de/ralph/internal/backend"
-	"changkun.de/ralph/internal/prompt"
+	"github.com/changkun/ralph/internal/backend"
+	"github.com/changkun/ralph/internal/prompt"
 )
 
 func TestParseArgs(t *testing.T) {

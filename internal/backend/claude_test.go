@@ -6,7 +6,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"changkun.de/ralph/internal/prompt"
+	"github.com/changkun/ralph/internal/prompt"
 )
 
 func fakeBin(t *testing.T, name, script string) {

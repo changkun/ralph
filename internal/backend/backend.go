@@ -4,7 +4,7 @@ import (
 	"context"
 	"encoding/json"
 
-	"changkun.de/ralph/internal/prompt"
+	"github.com/changkun/ralph/internal/prompt"
 )
 
 // Backend runs LLM commands for the think-act loop.

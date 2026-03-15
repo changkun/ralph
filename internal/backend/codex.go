@@ -6,7 +6,7 @@ import (
 	"os"
 	"os/exec"
 
-	"changkun.de/ralph/internal/prompt"
+	"github.com/changkun/ralph/internal/prompt"
 )
 
 // Codex implements Backend using the OpenAI Codex CLI.

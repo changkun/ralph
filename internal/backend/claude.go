@@ -4,7 +4,7 @@ import (
 	"context"
 	"os/exec"
 
-	"changkun.de/ralph/internal/prompt"
+	"github.com/changkun/ralph/internal/prompt"
 )
 
 // Claude implements Backend using the Claude Code CLI.
