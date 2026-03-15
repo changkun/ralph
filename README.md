@@ -31,9 +31,7 @@ An autonomous "think-act" loop for [Claude Code](https://claude.com/claude-code)
 
 Each agent's prompt is defined as a Go template in `internal/prompt/templates/`. Full JSON output from each thinker and worker is saved in `.ralph/` (e.g. `round-001-thinker.json`, `round-001-worker.json`). The thinker checks this folder for context on what previous rounds proposed.
 
-The thinker dynamically balances exploration and exploitation using a cyclic scoring function with random jitter — no two runs follow the same pattern.
-
-If the project folder is a git repository, changes are automatically committed and pushed after each round. The committer also acts as a knowledge architect, maintaining project documentation alongside commits. Non-git folders skip the commit step.
+If the project folder is a git repository, changes are automatically committed and pushed after each round. The committer also maintains project documentation alongside commits. Non-git folders skip the commit step.
 
 On restart, ralph resumes from the last completed round.
 
@@ -73,7 +71,7 @@ Press `Ctrl-C` to stop at any time.
 ```
 internal/
 ├── backend/     Backend interface, Claude and Codex implementations
-├── git/         Git helpers (repo detection, changes, commit hash)
+├── git/         Git helpers (repo detection, change detection)
 ├── loop/        Main think-act-commit loop with resume support
 └── prompt/      go:embed templates, one .tmpl per agent (system + prompt)
 ```

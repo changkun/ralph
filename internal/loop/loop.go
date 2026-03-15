@@ -21,7 +21,7 @@ func Run(ctx context.Context, be backend.Backend, folder, ralphDir string, round
 
 		fmt.Printf("%s\n  Round %d — Thinking...\n%s\n", separator, *round, separator)
 
-		thinkerRaw, err := be.RunThinker(ctx, folder, prompt.ThinkerPromptForRound(*round))
+		thinkerRaw, err := be.RunThinker(ctx, folder, prompt.ThinkerPrompt())
 		if err != nil && ctx.Err() != nil {
 			return
 		}

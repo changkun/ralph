@@ -3,8 +3,6 @@ package prompt
 import (
 	"bytes"
 	"embed"
-	"math"
-	"math/rand/v2"
 	"strings"
 	"text/template"
 )
@@ -48,26 +46,9 @@ var (
 	committerAgent = loadAgent("committer")
 )
 
-// ExploreScore returns a value in [0, 1] representing how exploratory the
-// thinker should be. Combines a sine wave (~6-round cycle) with random jitter.
-func ExploreScore(round int) float64 {
-	wave := (math.Sin(float64(round)*2*math.Pi/6-math.Pi/2) + 1) / 2
-	jitter := (rand.Float64() - 0.5) * 0.4
-	return max(0, min(1, wave+jitter))
-}
-
-// ThinkerPrompt creates a thinker prompt for a given round and score.
-func ThinkerPrompt(round int, score float64) Prompt {
-	return thinkerAgent.render(struct {
-		Round          int
-		ExplorePercent int
-		Score          float64
-	}{round, int(score * 100), score})
-}
-
-// ThinkerPromptForRound generates the thinker prompt with a dynamic explore score.
-func ThinkerPromptForRound(round int) Prompt {
-	return ThinkerPrompt(round, ExploreScore(round))
+// ThinkerPrompt generates the thinker prompt.
+func ThinkerPrompt() Prompt {
+	return thinkerAgent.render(nil)
 }
 
 // WorkerPrompt formats the worker prompt with folder and idea.
@@ -79,4 +60,3 @@ func WorkerPrompt(folder, idea string) Prompt {
 func CommitPrompt(objective, workerResult string) Prompt {
 	return committerAgent.render(struct{ Objective, WorkerResult string }{objective, workerResult})
 }
-
