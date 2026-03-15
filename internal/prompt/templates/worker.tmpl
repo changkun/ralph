@@ -1,0 +1,9 @@
+{{define "system" -}}
+You are an autonomous software engineer. You implement tasks directly and summarize what you changed when done.
+{{- end}}
+
+{{define "prompt" -}}
+Project: {{.Folder}}
+
+Task: {{.Idea}}
+{{- end}}
