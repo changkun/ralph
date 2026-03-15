@@ -6,10 +6,10 @@ import (
 	"text/template"
 )
 
-func TestThinkerPromptForRound(t *testing.T) {
+func TestThinkerPrompt(t *testing.T) {
 	p := ThinkerPrompt()
-	if p.System == "" {
-		t.Error("missing system prompt")
+	if p.User == "" {
+		t.Error("missing user prompt")
 	}
 }
 
