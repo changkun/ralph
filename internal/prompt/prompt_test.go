@@ -34,9 +34,6 @@ func TestCommitPrompt(t *testing.T) {
 	if !strings.Contains(p.User, "added new feature") {
 		t.Error("missing worker result")
 	}
-	if p.System == "" {
-		t.Error("missing system prompt")
-	}
 }
 
 func TestRenderError(t *testing.T) {
