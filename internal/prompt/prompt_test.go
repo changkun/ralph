@@ -27,7 +27,7 @@ func TestWorkerPrompt(t *testing.T) {
 }
 
 func TestCommitPrompt(t *testing.T) {
-	p := CommitPrompt("add feature X", "added new feature")
+	p := CommitPrompt("add feature X", "added new feature", "CLAUDE.md")
 	if !strings.Contains(p.User, "add feature X") {
 		t.Error("missing objective")
 	}
@@ -37,7 +37,7 @@ func TestCommitPrompt(t *testing.T) {
 }
 
 func TestBuilderPrompt(t *testing.T) {
-	p := BuilderPrompt("/tmp/project")
+	p := BuilderPrompt("/tmp/project", "CLAUDE.md")
 	if !strings.Contains(p.User, "/tmp/project") {
 		t.Error("missing folder")
 	}

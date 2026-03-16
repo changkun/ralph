@@ -15,6 +15,7 @@ import (
 
 	"github.com/changkun/ralph/internal/backend"
 	"github.com/changkun/ralph/internal/loop"
+	"github.com/changkun/ralph/internal/prompt"
 )
 
 type config struct {
@@ -84,11 +85,12 @@ func run(ctx context.Context, cfg config, be backend.Backend) error {
 	}
 	fmt.Println("Press Ctrl-C to stop.")
 	fmt.Println()
+	memFile := prompt.MemoryFile(cfg.backendName)
 	switch cfg.pattern {
 	case "builder":
-		loop.RunBuilder(ctx, be, cfg.folder, ralphDir, &round, cfg.maxRounds)
+		loop.RunBuilder(ctx, be, cfg.folder, ralphDir, memFile, &round, cfg.maxRounds)
 	default:
-		loop.Run(ctx, be, cfg.folder, ralphDir, &round, cfg.maxRounds)
+		loop.Run(ctx, be, cfg.folder, ralphDir, memFile, &round, cfg.maxRounds)
 	}
 	return nil
 }

@@ -12,14 +12,14 @@ import (
 
 // RunBuilder executes the builder loop: a single agent that thinks, acts,
 // and commits in each round.
-func RunBuilder(ctx context.Context, be backend.Backend, folder, ralphDir string, round *int, maxRounds int) {
+func RunBuilder(ctx context.Context, be backend.Backend, folder, ralphDir, memoryFile string, round *int, maxRounds int) {
 	for maxRounds == 0 || *round < maxRounds {
 		*round++
 		prefix := filepath.Join(ralphDir, fmt.Sprintf("round-%03d", *round))
 
 		fmt.Printf("%s\n  Round %d — Building...\n%s\n", separator, *round, separator)
 
-		raw, err := be.RunWorker(ctx, folder, prompt.BuilderPrompt(folder))
+		raw, err := be.RunWorker(ctx, folder, prompt.BuilderPrompt(folder, memoryFile))
 		if err != nil && ctx.Err() != nil {
 			return
 		}

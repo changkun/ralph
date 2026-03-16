@@ -70,7 +70,7 @@ func initRepo(t *testing.T, dir string) {
 func TestNormal(t *testing.T) {
 	dir, rd := setup(t)
 	r := 0
-	Run(context.Background(), &mockBE{ok("idea"), ok("done"), nil}, dir, rd, &r, 1)
+	Run(context.Background(), &mockBE{ok("idea"), ok("done"), nil}, dir, rd, "CLAUDE.md", &r, 1)
 	if r != 1 {
 		t.Errorf("round=%d", r)
 	}
@@ -79,13 +79,13 @@ func TestNormal(t *testing.T) {
 func TestEmptyWorker(t *testing.T) {
 	dir, rd := setup(t)
 	r := 0
-	Run(context.Background(), &mockBE{ok("idea"), ok(""), nil}, dir, rd, &r, 1)
+	Run(context.Background(), &mockBE{ok("idea"), ok(""), nil}, dir, rd, "CLAUDE.md", &r, 1)
 }
 
 func TestEmptyThinker(t *testing.T) {
 	dir, rd := setup(t)
 	r := 0
-	Run(context.Background(), &mockBE{ok(""), ok(""), nil}, dir, rd, &r, 1)
+	Run(context.Background(), &mockBE{ok(""), ok(""), nil}, dir, rd, "CLAUDE.md", &r, 1)
 }
 
 func TestThinkerCancel(t *testing.T) {
@@ -93,7 +93,7 @@ func TestThinkerCancel(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 	r := 0
-	Run(ctx, &mockBE{fail(), ok(""), nil}, dir, rd, &r, 0)
+	Run(ctx, &mockBE{fail(), ok(""), nil}, dir, rd, "CLAUDE.md", &r, 0)
 }
 
 func TestWorkerCancel(t *testing.T) {
@@ -101,7 +101,7 @@ func TestWorkerCancel(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	r := 0
 	be := &mockBE{ok("idea"), func() (string, error) { cancel(); return "", errors.New("e") }, nil}
-	Run(ctx, be, dir, rd, &r, 0)
+	Run(ctx, be, dir, rd, "CLAUDE.md", &r, 0)
 }
 
 func TestGitCommit(t *testing.T) {
@@ -109,7 +109,7 @@ func TestGitCommit(t *testing.T) {
 	initRepo(t, dir)
 	os.WriteFile(filepath.Join(dir, "f.txt"), []byte("x"), 0o644)
 	r := 0
-	Run(context.Background(), &mockBE{ok("idea"), ok("done"), ok("committed")}, dir, rd, &r, 1)
+	Run(context.Background(), &mockBE{ok("idea"), ok("done"), ok("committed")}, dir, rd, "CLAUDE.md", &r, 1)
 }
 
 func TestGitCommitEmpty(t *testing.T) {
@@ -117,7 +117,7 @@ func TestGitCommitEmpty(t *testing.T) {
 	initRepo(t, dir)
 	os.WriteFile(filepath.Join(dir, "f.txt"), []byte("x"), 0o644)
 	r := 0
-	Run(context.Background(), &mockBE{ok("idea"), ok("done"), ok("")}, dir, rd, &r, 1)
+	Run(context.Background(), &mockBE{ok("idea"), ok("done"), ok("")}, dir, rd, "CLAUDE.md", &r, 1)
 }
 
 func TestGitCommitErr(t *testing.T) {
@@ -125,13 +125,13 @@ func TestGitCommitErr(t *testing.T) {
 	initRepo(t, dir)
 	os.WriteFile(filepath.Join(dir, "f.txt"), []byte("x"), 0o644)
 	r := 0
-	Run(context.Background(), &mockBE{ok("idea"), ok("done"), fail()}, dir, rd, &r, 1)
+	Run(context.Background(), &mockBE{ok("idea"), ok("done"), fail()}, dir, rd, "CLAUDE.md", &r, 1)
 }
 
 func TestBuilderNormal(t *testing.T) {
 	dir, rd := setup(t)
 	r := 0
-	RunBuilder(context.Background(), &mockBE{nil, ok("built it"), nil}, dir, rd, &r, 1)
+	RunBuilder(context.Background(), &mockBE{nil, ok("built it"), nil}, dir, rd, "CLAUDE.md", &r, 1)
 	if r != 1 {
 		t.Errorf("round=%d", r)
 	}
@@ -140,7 +140,7 @@ func TestBuilderNormal(t *testing.T) {
 func TestBuilderEmpty(t *testing.T) {
 	dir, rd := setup(t)
 	r := 0
-	RunBuilder(context.Background(), &mockBE{nil, ok(""), nil}, dir, rd, &r, 1)
+	RunBuilder(context.Background(), &mockBE{nil, ok(""), nil}, dir, rd, "CLAUDE.md", &r, 1)
 }
 
 func TestBuilderCancel(t *testing.T) {
@@ -148,7 +148,7 @@ func TestBuilderCancel(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 	r := 0
-	RunBuilder(ctx, &mockBE{nil, fail(), nil}, dir, rd, &r, 0)
+	RunBuilder(ctx, &mockBE{nil, fail(), nil}, dir, rd, "CLAUDE.md", &r, 0)
 }
 
 func TestResumeRoundBuilder(t *testing.T) {

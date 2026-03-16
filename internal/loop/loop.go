@@ -14,7 +14,7 @@ import (
 const separator = "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 
 // Run executes the think-act-commit loop.
-func Run(ctx context.Context, be backend.Backend, folder, ralphDir string, round *int, maxRounds int) {
+func Run(ctx context.Context, be backend.Backend, folder, ralphDir, memoryFile string, round *int, maxRounds int) {
 	for maxRounds == 0 || *round < maxRounds {
 		*round++
 		prefix := filepath.Join(ralphDir, fmt.Sprintf("round-%03d", *round))
@@ -51,7 +51,7 @@ func Run(ctx context.Context, be backend.Backend, folder, ralphDir string, round
 
 		if git.IsRepo(folder) && git.HasChanges(folder) {
 			fmt.Printf("%s\n  Round %d — Committing...\n%s\n", separator, *round, separator)
-			cr, err := be.RunCommitter(ctx, folder, prompt.CommitPrompt(idea, result))
+			cr, err := be.RunCommitter(ctx, folder, prompt.CommitPrompt(idea, result, memoryFile))
 			if err == nil && cr != "" {
 				fmt.Println(cr)
 			}

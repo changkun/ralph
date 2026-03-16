@@ -57,12 +57,20 @@ func WorkerPrompt(folder, idea string) Prompt {
 	return workerAgent.render(struct{ Folder, Idea string }{folder, idea})
 }
 
+// MemoryFile returns the memory filename for a given backend.
+func MemoryFile(backendName string) string {
+	if backendName == "codex" {
+		return "AGENTS.md"
+	}
+	return "CLAUDE.md"
+}
+
 // CommitPrompt formats the committer prompt with objective and worker result.
-func CommitPrompt(objective, workerResult string) Prompt {
-	return committerAgent.render(struct{ Objective, WorkerResult string }{objective, workerResult})
+func CommitPrompt(objective, workerResult, memoryFile string) Prompt {
+	return committerAgent.render(struct{ Objective, WorkerResult, MemoryFile string }{objective, workerResult, memoryFile})
 }
 
 // BuilderPrompt generates the builder prompt with the project folder.
-func BuilderPrompt(folder string) Prompt {
-	return builderAgent.render(struct{ Folder string }{folder})
+func BuilderPrompt(folder, memoryFile string) Prompt {
+	return builderAgent.render(struct{ Folder, MemoryFile string }{folder, memoryFile})
 }
