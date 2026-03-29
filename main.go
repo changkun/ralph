@@ -2,7 +2,7 @@
 //
 // Usage:
 //
-//	ralph [--backend claude|codex] [--pattern think-act|builder] [--max-rounds N] <folder>
+//	ralph [--backend claude|codex] [--pattern standalone|strategist-executor] [--max-rounds N] <folder>
 package main
 
 import (
@@ -25,8 +25,25 @@ type config struct {
 	folder      string
 }
 
+const (
+	patternStandalone         = "standalone"
+	patternStrategistExecutor = "strategist-executor"
+	patternUsage              = patternStandalone + "|" + patternStrategistExecutor
+)
+
+func normalizePattern(pattern string) (string, bool) {
+	switch pattern {
+	case "", patternStrategistExecutor, "think-act", "think_act":
+		return patternStrategistExecutor, true
+	case patternStandalone, "builder", "build-only", "build_only":
+		return patternStandalone, true
+	default:
+		return "", false
+	}
+}
+
 func parseArgs(args []string) (config, error) {
-	cfg := config{backendName: "claude", pattern: "think-act"}
+	cfg := config{backendName: "claude", pattern: patternStrategistExecutor}
 	for len(args) > 0 {
 		switch args[0] {
 		case "--backend":
@@ -65,8 +82,10 @@ func parseArgs(args []string) (config, error) {
 	if cfg.backendName != "claude" && cfg.backendName != "codex" {
 		return cfg, fmt.Errorf("backend must be 'claude' or 'codex', got '%s'", cfg.backendName)
 	}
-	if cfg.pattern != "think-act" && cfg.pattern != "builder" {
-		return cfg, fmt.Errorf("pattern must be 'think-act' or 'builder', got '%s'", cfg.pattern)
+	var ok bool
+	cfg.pattern, ok = normalizePattern(cfg.pattern)
+	if !ok {
+		return cfg, fmt.Errorf("pattern must be '%s' or '%s', got '%s'", patternStandalone, patternStrategistExecutor, cfg.pattern)
 	}
 	var err error
 	cfg.folder, err = filepath.Abs(cfg.folder)
@@ -74,7 +93,18 @@ func parseArgs(args []string) (config, error) {
 }
 
 func run(ctx context.Context, cfg config, be backend.Backend) error {
+	if cfg.backendName == "" {
+		cfg.backendName = "claude"
+	}
+	var ok bool
+	cfg.pattern, ok = normalizePattern(cfg.pattern)
+	if !ok {
+		return fmt.Errorf("pattern must be '%s' or '%s', got '%s'", patternStandalone, patternStrategistExecutor, cfg.pattern)
+	}
 	ralphDir := filepath.Join(cfg.folder, ".ralph")
+	if err := os.MkdirAll(ralphDir, 0o755); err != nil {
+		return err
+	}
 	round := loop.ResumeRound(ralphDir)
 	fmt.Printf("=== Ralph loop starting ===\nBackend: %s\nPattern: %s\nFolder: %s\n", cfg.backendName, cfg.pattern, cfg.folder)
 	if round > 0 {
@@ -87,10 +117,10 @@ func run(ctx context.Context, cfg config, be backend.Backend) error {
 	fmt.Println()
 	memFile := prompt.MemoryFile(cfg.backendName)
 	switch cfg.pattern {
-	case "builder":
-		loop.RunBuilder(ctx, be, cfg.folder, ralphDir, memFile, &round, cfg.maxRounds)
+	case patternStandalone:
+		loop.RunStandalone(ctx, be, cfg.folder, ralphDir, memFile, &round, cfg.maxRounds)
 	default:
-		loop.Run(ctx, be, cfg.folder, ralphDir, memFile, &round, cfg.maxRounds)
+		loop.RunStrategistExecutor(ctx, be, cfg.folder, ralphDir, memFile, &round, cfg.maxRounds)
 	}
 	return nil
 }
@@ -100,7 +130,7 @@ var osExit = os.Exit
 func realMain(args []string) int {
 	cfg, err := parseArgs(args)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error: %v\nUsage: ralph [--backend claude|codex] [--pattern think-act|builder] [--max-rounds N] <folder>\n", err)
+		fmt.Fprintf(os.Stderr, "Error: %v\nUsage: ralph [--backend claude|codex] [--pattern %s] [--max-rounds N] <folder>\n", err, patternUsage)
 		return 1
 	}
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt)

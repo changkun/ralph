@@ -21,8 +21,12 @@ func ResumeRound(ralphDir string) int {
 		}
 		var n int
 		switch {
+		case strings.HasSuffix(name, "-executor.json"):
+			fmt.Sscanf(name, "round-%d-executor.json", &n)
 		case strings.HasSuffix(name, "-worker.json"):
 			fmt.Sscanf(name, "round-%d-worker.json", &n)
+		case strings.HasSuffix(name, "-standalone.json"):
+			fmt.Sscanf(name, "round-%d-standalone.json", &n)
 		case strings.HasSuffix(name, "-builder.json"):
 			fmt.Sscanf(name, "round-%d-builder.json", &n)
 		default:

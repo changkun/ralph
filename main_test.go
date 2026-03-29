@@ -21,10 +21,12 @@ func TestParseArgs(t *testing.T) {
 		rounds  int
 		pattern string
 	}{
-		{"default", []string{"/tmp"}, false, "claude", 0, "think-act"},
-		{"codex", []string{"--backend", "codex", "/tmp"}, false, "codex", 0, "think-act"},
-		{"rounds", []string{"--max-rounds", "5", "/tmp"}, false, "claude", 5, "think-act"},
-		{"builder", []string{"--pattern", "builder", "/tmp"}, false, "claude", 0, "builder"},
+		{"default", []string{"/tmp"}, false, "claude", 0, "strategist-executor"},
+		{"codex", []string{"--backend", "codex", "/tmp"}, false, "codex", 0, "strategist-executor"},
+		{"rounds", []string{"--max-rounds", "5", "/tmp"}, false, "claude", 5, "strategist-executor"},
+		{"standalone", []string{"--pattern", "standalone", "/tmp"}, false, "claude", 0, "standalone"},
+		{"builder alias", []string{"--pattern", "builder", "/tmp"}, false, "claude", 0, "standalone"},
+		{"think-act alias", []string{"--pattern", "think-act", "/tmp"}, false, "claude", 0, "strategist-executor"},
 		{"no folder", []string{}, true, "", 0, ""},
 		{"bad backend", []string{"--backend", "gpt", "/tmp"}, true, "", 0, ""},
 		{"bad pattern", []string{"--pattern", "bad", "/tmp"}, true, "", 0, ""},
@@ -76,15 +78,15 @@ func (m *runMock) RunCommitter(_ context.Context, _ string, _ prompt.Prompt) (st
 
 var _ backend.Backend = (*runMock)(nil)
 
-func TestRun(t *testing.T) {
-	err := run(context.Background(), config{backendName: "claude", pattern: "think-act", maxRounds: 1, folder: t.TempDir()}, &runMock{})
+func TestRunStrategistExecutor(t *testing.T) {
+	err := run(context.Background(), config{backendName: "claude", pattern: "strategist-executor", maxRounds: 1, folder: t.TempDir()}, &runMock{})
 	if err != nil {
 		t.Fatal(err)
 	}
 }
 
-func TestRunBuilder(t *testing.T) {
-	err := run(context.Background(), config{backendName: "claude", pattern: "builder", maxRounds: 1, folder: t.TempDir()}, &runMock{})
+func TestRunStandalone(t *testing.T) {
+	err := run(context.Background(), config{backendName: "claude", pattern: "standalone", maxRounds: 1, folder: t.TempDir()}, &runMock{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -104,8 +106,8 @@ func TestRunResume(t *testing.T) {
 	os.MkdirAll(rd, 0o755)
 	for i := 1; i <= 3; i++ {
 		data, _ := json.Marshal(backend.Result{Value: fmt.Sprintf("idea%d", i)})
-		os.WriteFile(filepath.Join(rd, fmt.Sprintf("round-%03d-thinker.json", i)), data, 0o644)
-		os.WriteFile(filepath.Join(rd, fmt.Sprintf("round-%03d-worker.json", i)), data, 0o644)
+		os.WriteFile(filepath.Join(rd, fmt.Sprintf("round-%03d-strategist.json", i)), data, 0o644)
+		os.WriteFile(filepath.Join(rd, fmt.Sprintf("round-%03d-executor.json", i)), data, 0o644)
 	}
 	if err := run(context.Background(), config{backendName: "claude", maxRounds: 4, folder: dir}, &runMock{}); err != nil {
 		t.Fatal(err)

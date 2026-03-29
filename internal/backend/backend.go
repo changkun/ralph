@@ -7,7 +7,7 @@ import (
 	"github.com/changkun/ralph/internal/prompt"
 )
 
-// Backend runs LLM commands for the think-act loop.
+// Backend runs LLM commands for Ralph's orchestration loops.
 type Backend interface {
 	RunThinker(ctx context.Context, folder string, p prompt.Prompt) ([]byte, error)
 	RunWorker(ctx context.Context, folder string, p prompt.Prompt) ([]byte, error)
