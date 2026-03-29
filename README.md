@@ -1,19 +1,21 @@
 # ralph
 
-An autonomous "think-act" loop for [Claude Code](https://claude.com/claude-code) and [OpenAI Codex](https://github.com/openai/codex). A thinker proposes goals; a worker implements them; a committer pushes the results and documents decisions. Repeat.
+Autonomous coding loops for [Claude Code](https://claude.com/claude-code) and [OpenAI Codex](https://github.com/openai/codex). Ralph supports two patterns: `strategist-executor` and `standalone`.
 
 ## How it works
 
+### `strategist-executor`
+
 ```
 ┌─────────────────────────────┐
-│  Thinker                    │
+│  Strategist                 │
 │  Analyzes the project,      │
 │  proposes one goal          │
 └────────────┬────────────────┘
              │
              ▼
 ┌─────────────────────────────┐
-│  Worker                     │
+│  Executor                   │
 │  Implements the goal,       │
 │  modifies the code          │
 └────────────┬────────────────┘
@@ -26,10 +28,14 @@ An autonomous "think-act" loop for [Claude Code](https://claude.com/claude-code)
 │  (git repos only)           │
 └────────────┬────────────────┘
              │
-             └──── loop ────► back to Thinker
+             └──── loop ────► back to Strategist
 ```
 
-Each agent's prompt is defined as a Go template in `internal/prompt/templates/`. Full JSON output from each thinker and worker is saved in `.ralph/` (e.g. `round-001-thinker.json`, `round-001-worker.json`). The thinker checks this folder for context on what previous rounds proposed.
+Each agent's prompt is defined as a Go template in `internal/prompt/templates/`. Full JSON output from each strategist and executor round is saved in `.ralph/` (e.g. `round-001-strategist.json`, `round-001-executor.json`).
+
+### `standalone`
+
+One agent chooses a concrete next step, implements it directly, updates memory if needed, and commits and pushes the result. Its round output is saved as `.ralph/round-001-standalone.json`.
 
 If the project folder is a git repository, changes are automatically committed and pushed after each round. The committer also maintains project documentation alongside commits. Non-git folders skip the commit step.
 
@@ -53,18 +59,24 @@ go build -o ralph .
 # Using OpenAI Codex
 ./ralph --backend codex /path/to/project
 
+# Run the single-agent standalone pattern
+./ralph --pattern standalone /path/to/project
+
 # Limit to 5 rounds
 ./ralph --max-rounds 5 /path/to/project
 ```
 
 Press `Ctrl-C` to stop at any time.
 
+Legacy pattern aliases `think-act` and `builder` are still accepted and normalize to the new names.
+
 ## Configuration
 
-| Flag                    | Default     | Description                              |
-|-------------------------|-------------|------------------------------------------|
-| `--max-rounds N`        | unlimited   | Stop after N rounds                      |
-| `--backend claude\|codex`| `claude`    | LLM backend to use                       |
+| Flag                                   | Default                 | Description                 |
+|----------------------------------------|-------------------------|-----------------------------|
+| `--max-rounds N`                       | unlimited               | Stop after N rounds         |
+| `--backend claude\|codex`              | `claude`                | LLM backend to use          |
+| `--pattern standalone\|strategist-executor` | `strategist-executor` | Execution pattern to use    |
 
 ## Project structure
 
@@ -72,7 +84,7 @@ Press `Ctrl-C` to stop at any time.
 internal/
 ├── backend/     Backend interface, Claude and Codex implementations
 ├── git/         Git helpers (repo detection, change detection)
-├── loop/        Main think-act-commit loop with resume support
+├── loop/        Strategist-executor and standalone loops with resume support
 └── prompt/      go:embed templates, one .tmpl per agent (system + prompt)
 ```
 

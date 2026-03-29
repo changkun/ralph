@@ -41,22 +41,36 @@ func (a agentTmpl) render(data any) Prompt {
 }
 
 var (
-	thinkerAgent   = loadAgent("thinker")
-	workerAgent    = loadAgent("worker")
-	committerAgent = loadAgent("committer")
+	strategistAgent = loadAgent("strategist")
+	executorAgent   = loadAgent("executor")
+	committerAgent  = loadAgent("committer")
+	standaloneAgent = loadAgent("standalone")
 )
 
-// ThinkerPrompt generates the thinker prompt.
-func ThinkerPrompt() Prompt {
-	return thinkerAgent.render(nil)
+// StrategistPrompt generates the strategist prompt.
+func StrategistPrompt() Prompt {
+	return strategistAgent.render(nil)
 }
 
-// WorkerPrompt formats the worker prompt with folder and idea.
-func WorkerPrompt(folder, idea string) Prompt {
-	return workerAgent.render(struct{ Folder, Idea string }{folder, idea})
+// ExecutorPrompt formats the executor prompt with folder and objective.
+func ExecutorPrompt(folder, objective string) Prompt {
+	return executorAgent.render(struct{ Folder, Objective string }{folder, objective})
 }
 
-// CommitPrompt formats the committer prompt with objective and worker result.
-func CommitPrompt(objective, workerResult string) Prompt {
-	return committerAgent.render(struct{ Objective, WorkerResult string }{objective, workerResult})
+// MemoryFile returns the memory filename for a given backend.
+func MemoryFile(backendName string) string {
+	if backendName == "codex" {
+		return "AGENTS.md"
+	}
+	return "CLAUDE.md"
+}
+
+// CommitPrompt formats the committer prompt with objective and executor result.
+func CommitPrompt(objective, executorResult, memoryFile string) Prompt {
+	return committerAgent.render(struct{ Objective, ExecutorResult, MemoryFile string }{objective, executorResult, memoryFile})
+}
+
+// StandalonePrompt generates the standalone prompt with the project folder.
+func StandalonePrompt(folder, memoryFile string) Prompt {
+	return standaloneAgent.render(struct{ Folder, MemoryFile string }{folder, memoryFile})
 }

@@ -13,45 +13,45 @@ import (
 
 const separator = "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 
-// Run executes the think-act-commit loop.
-func Run(ctx context.Context, be backend.Backend, folder, ralphDir string, round *int, maxRounds int) {
+// RunStrategistExecutor executes the strategist-executor loop.
+func RunStrategistExecutor(ctx context.Context, be backend.Backend, folder, ralphDir, memoryFile string, round *int, maxRounds int) {
 	for maxRounds == 0 || *round < maxRounds {
 		*round++
 		prefix := filepath.Join(ralphDir, fmt.Sprintf("round-%03d", *round))
 
-		fmt.Printf("%s\n  Round %d — Thinking...\n%s\n", separator, *round, separator)
+		fmt.Printf("%s\n  Round %d — Strategizing...\n%s\n", separator, *round, separator)
 
-		thinkerRaw, err := be.RunThinker(ctx, folder, prompt.ThinkerPrompt())
+		strategistRaw, err := be.RunThinker(ctx, folder, prompt.StrategistPrompt())
 		if err != nil && ctx.Err() != nil {
 			return
 		}
 		os.MkdirAll(ralphDir, 0o755)
-		_ = os.WriteFile(prefix+"-thinker.json", thinkerRaw, 0o644)
+		_ = os.WriteFile(prefix+"-strategist.json", strategistRaw, 0o644)
 
-		idea := backend.ExtractResult(thinkerRaw)
-		if idea == "" {
-			fmt.Println("[!] Thinker produced no output. Retrying...")
+		objective := backend.ExtractResult(strategistRaw)
+		if objective == "" {
+			fmt.Println("[!] Strategist produced no output. Retrying...")
 			continue
 		}
 
-		fmt.Printf("\n%s\n\n%s\n  Round %d — Working...\n%s\n", idea, separator, *round, separator)
+		fmt.Printf("\n%s\n\n%s\n  Round %d — Executing...\n%s\n", objective, separator, *round, separator)
 
-		workerRaw, err := be.RunWorker(ctx, folder, prompt.WorkerPrompt(folder, idea))
+		executorRaw, err := be.RunWorker(ctx, folder, prompt.ExecutorPrompt(folder, objective))
 		if err != nil && ctx.Err() != nil {
 			return
 		}
-		_ = os.WriteFile(prefix+"-worker.json", workerRaw, 0o644)
+		_ = os.WriteFile(prefix+"-executor.json", executorRaw, 0o644)
 
-		result := backend.ExtractResult(workerRaw)
+		result := backend.ExtractResult(executorRaw)
 		if result == "" {
-			fmt.Println("[!] Worker produced no output.")
+			fmt.Println("[!] Executor produced no output.")
 		} else {
 			fmt.Printf("\n%s\n\n", result)
 		}
 
 		if git.IsRepo(folder) && git.HasChanges(folder) {
 			fmt.Printf("%s\n  Round %d — Committing...\n%s\n", separator, *round, separator)
-			cr, err := be.RunCommitter(ctx, folder, prompt.CommitPrompt(idea, result))
+			cr, err := be.RunCommitter(ctx, folder, prompt.CommitPrompt(objective, result, memoryFile))
 			if err == nil && cr != "" {
 				fmt.Println(cr)
 			}

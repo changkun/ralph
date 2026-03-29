@@ -6,20 +6,20 @@ import (
 	"text/template"
 )
 
-func TestThinkerPrompt(t *testing.T) {
-	p := ThinkerPrompt()
+func TestStrategistPrompt(t *testing.T) {
+	p := StrategistPrompt()
 	if p.User == "" {
 		t.Error("missing user prompt")
 	}
 }
 
-func TestWorkerPrompt(t *testing.T) {
-	p := WorkerPrompt("/tmp/project", "build a CLI")
+func TestExecutorPrompt(t *testing.T) {
+	p := ExecutorPrompt("/tmp/project", "build a CLI")
 	if !strings.Contains(p.User, "/tmp/project") {
 		t.Error("missing folder")
 	}
 	if !strings.Contains(p.User, "build a CLI") {
-		t.Error("missing idea")
+		t.Error("missing objective")
 	}
 	if p.System == "" {
 		t.Error("missing system prompt")
@@ -27,12 +27,22 @@ func TestWorkerPrompt(t *testing.T) {
 }
 
 func TestCommitPrompt(t *testing.T) {
-	p := CommitPrompt("add feature X", "added new feature")
+	p := CommitPrompt("add feature X", "added new feature", "CLAUDE.md")
 	if !strings.Contains(p.User, "add feature X") {
 		t.Error("missing objective")
 	}
 	if !strings.Contains(p.User, "added new feature") {
-		t.Error("missing worker result")
+		t.Error("missing executor result")
+	}
+}
+
+func TestStandalonePrompt(t *testing.T) {
+	p := StandalonePrompt("/tmp/project", "CLAUDE.md")
+	if !strings.Contains(p.User, "/tmp/project") {
+		t.Error("missing folder")
+	}
+	if p.System == "" {
+		t.Error("missing system prompt")
 	}
 }
 

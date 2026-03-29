@@ -16,11 +16,23 @@ func ResumeRound(ralphDir string) int {
 	maxRound := 0
 	for _, e := range entries {
 		name := e.Name()
-		if !strings.HasPrefix(name, "round-") || !strings.HasSuffix(name, "-worker.json") {
+		if !strings.HasPrefix(name, "round-") {
 			continue
 		}
 		var n int
-		if _, err := fmt.Sscanf(name, "round-%d-worker.json", &n); err == nil && n > maxRound {
+		switch {
+		case strings.HasSuffix(name, "-executor.json"):
+			fmt.Sscanf(name, "round-%d-executor.json", &n)
+		case strings.HasSuffix(name, "-worker.json"):
+			fmt.Sscanf(name, "round-%d-worker.json", &n)
+		case strings.HasSuffix(name, "-standalone.json"):
+			fmt.Sscanf(name, "round-%d-standalone.json", &n)
+		case strings.HasSuffix(name, "-builder.json"):
+			fmt.Sscanf(name, "round-%d-builder.json", &n)
+		default:
+			continue
+		}
+		if n > maxRound {
 			maxRound = n
 		}
 	}
