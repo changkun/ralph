@@ -26,8 +26,11 @@ func TestExecutorPrompt(t *testing.T) {
 	}
 }
 
-func TestCommitPrompt(t *testing.T) {
-	p := CommitPrompt("add feature X", "added new feature", "CLAUDE.md")
+func TestEvaluatorPrompt(t *testing.T) {
+	p := EvaluatorPrompt("/tmp/project", "add feature X", "added new feature")
+	if !strings.Contains(p.User, "/tmp/project") {
+		t.Error("missing folder")
+	}
 	if !strings.Contains(p.User, "add feature X") {
 		t.Error("missing objective")
 	}
@@ -36,8 +39,27 @@ func TestCommitPrompt(t *testing.T) {
 	}
 }
 
+func TestArchivistPrompt(t *testing.T) {
+	p := ArchivistPrompt("/tmp/project", "add feature X", "added new feature", "tests passed", "CLAUDE.md")
+	if !strings.Contains(p.User, "/tmp/project") {
+		t.Error("missing folder")
+	}
+	if !strings.Contains(p.User, "add feature X") {
+		t.Error("missing objective")
+	}
+	if !strings.Contains(p.User, "added new feature") {
+		t.Error("missing executor result")
+	}
+	if !strings.Contains(p.User, "tests passed") {
+		t.Error("missing evaluator result")
+	}
+	if !strings.Contains(p.User, "CLAUDE.md") {
+		t.Error("missing memory file")
+	}
+}
+
 func TestStandalonePrompt(t *testing.T) {
-	p := StandalonePrompt("/tmp/project", "CLAUDE.md")
+	p := StandalonePrompt("/tmp/project")
 	if !strings.Contains(p.User, "/tmp/project") {
 		t.Error("missing folder")
 	}

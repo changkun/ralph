@@ -1,45 +1,113 @@
 # ralph
 
-Autonomous coding loops for [Claude Code](https://claude.com/claude-code) and [OpenAI Codex](https://github.com/openai/codex). Ralph supports two patterns: `strategist-executor` and `standalone`.
+Autonomous coding loops for [Claude Code](https://claude.com/claude-code) and [OpenAI Codex](https://github.com/openai/codex). Ralph exposes the four patterns described in [Goalless Agents](https://changkun.de/blog/posts/goalless-agents/):
+
+- `standalone`
+- `think+act`
+- `think+act+evaluator`
+- `think+act+evaluator+archivist`
 
 ## How it works
 
-### `strategist-executor`
+Ralph models four agent roles:
+
+- `Strategist`: proposes exactly one next objective
+- `Executor`: implements that objective
+- `Evaluator`: verifies the latest round without becoming a planner
+- `Archivist`: observes the round and records durable knowledge
+
+Git commit and push are infrastructure, not agent roles. After each round, Ralph stages and commits repository changes automatically. If the current branch has an upstream, Ralph pushes too; otherwise it keeps the commit local.
+
+### `standalone`
+
+```
+┌─────────────────────────────┐
+│  Standalone                 │
+│  Chooses one next step      │
+│  and implements it          │
+└────────────┬────────────────┘
+             │
+             └──── loop ────► back to Standalone
+```
+
+One agent chooses a concrete next step and implements it directly. No dedicated evaluator or archivist is involved. Its round output is saved as `.ralph/round-001-standalone.json`.
+
+### `think+act`
 
 ```
 ┌─────────────────────────────┐
 │  Strategist                 │
-│  Analyzes the project,      │
-│  proposes one goal          │
+│  Proposes one next goal     │
 └────────────┬────────────────┘
              │
              ▼
 ┌─────────────────────────────┐
 │  Executor                   │
-│  Implements the goal,       │
-│  modifies the code          │
-└────────────┬────────────────┘
-             │
-             ▼
-┌─────────────────────────────┐
-│  Committer                  │
-│  Commits, pushes, and       │
-│  documents knowledge        │
-│  (git repos only)           │
+│  Implements the goal        │
 └────────────┬────────────────┘
              │
              └──── loop ────► back to Strategist
 ```
 
-Each agent's prompt is defined as a Go template in `internal/prompt/templates/`. Full JSON output from each strategist and executor round is saved in `.ralph/` (e.g. `round-001-strategist.json`, `round-001-executor.json`).
+This is the stripped two-role loop. Each round saves `.ralph/round-XXX-strategist.json` and `.ralph/round-XXX-executor.json`.
 
-### `standalone`
+### `think+act+evaluator`
 
-One agent chooses a concrete next step, implements it directly, updates memory if needed, and commits and pushes the result. Its round output is saved as `.ralph/round-001-standalone.json`.
+```
+┌─────────────────────────────┐
+│  Strategist                 │
+│  Proposes one next goal     │
+└────────────┬────────────────┘
+             │
+             ▼
+┌─────────────────────────────┐
+│  Executor                   │
+│  Implements the goal        │
+└────────────┬────────────────┘
+             │
+             ▼
+┌─────────────────────────────┐
+│  Evaluator                  │
+│  Verifies the round         │
+└────────────┬────────────────┘
+             │
+             └──── loop ────► back to Strategist
+```
 
-If the project folder is a git repository, changes are automatically committed and pushed after each round. The committer also maintains project documentation alongside commits. Non-git folders skip the commit step.
+This adds a verification layer without adding a knowledge role. Each round also saves `.ralph/round-XXX-evaluator.json`.
 
-On restart, ralph resumes from the last completed round.
+### `think+act+evaluator+archivist`
+
+```
+┌─────────────────────────────┐
+│  Strategist                 │
+│  Proposes one next goal     │
+└────────────┬────────────────┘
+             │
+             ▼
+┌─────────────────────────────┐
+│  Executor                   │
+│  Implements the goal        │
+└────────────┬────────────────┘
+             │
+             ▼
+┌─────────────────────────────┐
+│  Evaluator                  │
+│  Verifies the round         │
+└────────────┬────────────────┘
+             │
+             ▼
+┌─────────────────────────────┐
+│  Archivist                  │
+│  Records durable knowledge  │
+└────────────┬────────────────┘
+             │
+             └──── loop ────► back to Strategist
+```
+
+This is the full four-role pipeline from the article. The archivist is the observer/knowledge role: it updates `CLAUDE.md` or `AGENTS.md` and any relevant project documentation, then Ralph persists the round through git. Each round also saves `.ralph/round-XXX-archivist.json`.
+
+On restart, Ralph resumes from the last completed round for the selected pattern.
 
 ## Requirements
 
@@ -59,8 +127,14 @@ go build -o ralph .
 # Using OpenAI Codex
 ./ralph --backend codex /path/to/project
 
-# Run the single-agent standalone pattern
+# Run the standalone pattern
 ./ralph --pattern standalone /path/to/project
+
+# Add evaluation
+./ralph --pattern 'think+act+evaluator' /path/to/project
+
+# Run the full four-role pipeline
+./ralph --pattern 'think+act+evaluator+archivist' /path/to/project
 
 # Limit to 5 rounds
 ./ralph --max-rounds 5 /path/to/project
@@ -68,24 +142,24 @@ go build -o ralph .
 
 Press `Ctrl-C` to stop at any time.
 
-Legacy pattern aliases `think-act` and `builder` are still accepted and normalize to the new names.
+Legacy aliases `think-act`, `strategist-executor`, and `builder` are still accepted. Older `tester` and `documenter` pattern names also continue to normalize to the new evaluator/archivist names. `pipeline` and `full-pipeline` normalize to `think+act+evaluator+archivist`.
 
 ## Configuration
 
-| Flag                                   | Default                 | Description                 |
-|----------------------------------------|-------------------------|-----------------------------|
-| `--max-rounds N`                       | unlimited               | Stop after N rounds         |
-| `--backend claude\|codex`              | `claude`                | LLM backend to use          |
-| `--pattern standalone\|strategist-executor` | `strategist-executor` | Execution pattern to use    |
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--max-rounds N` | unlimited | Stop after N rounds |
+| `--backend claude\|codex` | `claude` | LLM backend to use |
+| `--pattern standalone\|think+act\|think+act+evaluator\|think+act+evaluator+archivist` | `think+act` | Execution pattern to use |
 
 ## Project structure
 
 ```
 internal/
 ├── backend/     Backend interface, Claude and Codex implementations
-├── git/         Git helpers (repo detection, change detection)
-├── loop/        Strategist-executor and standalone loops with resume support
-└── prompt/      go:embed templates, one .tmpl per agent (system + prompt)
+├── git/         Git helpers for repo detection and persistence
+├── loop/        Pattern loops and resume support
+└── prompt/      go:embed templates, one .tmpl per role
 ```
 
 ## License

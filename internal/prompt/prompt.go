@@ -43,7 +43,8 @@ func (a agentTmpl) render(data any) Prompt {
 var (
 	strategistAgent = loadAgent("strategist")
 	executorAgent   = loadAgent("executor")
-	committerAgent  = loadAgent("committer")
+	evaluatorAgent  = loadAgent("evaluator")
+	archivistAgent  = loadAgent("archivist")
 	standaloneAgent = loadAgent("standalone")
 )
 
@@ -57,6 +58,11 @@ func ExecutorPrompt(folder, objective string) Prompt {
 	return executorAgent.render(struct{ Folder, Objective string }{folder, objective})
 }
 
+// EvaluatorPrompt formats the evaluator prompt with the latest objective and result.
+func EvaluatorPrompt(folder, objective, executorResult string) Prompt {
+	return evaluatorAgent.render(struct{ Folder, Objective, ExecutorResult string }{folder, objective, executorResult})
+}
+
 // MemoryFile returns the memory filename for a given backend.
 func MemoryFile(backendName string) string {
 	if backendName == "codex" {
@@ -65,12 +71,14 @@ func MemoryFile(backendName string) string {
 	return "CLAUDE.md"
 }
 
-// CommitPrompt formats the committer prompt with objective and executor result.
-func CommitPrompt(objective, executorResult, memoryFile string) Prompt {
-	return committerAgent.render(struct{ Objective, ExecutorResult, MemoryFile string }{objective, executorResult, memoryFile})
+// ArchivistPrompt formats the archivist prompt with round context.
+func ArchivistPrompt(folder, objective, executorResult, evaluatorResult, memoryFile string) Prompt {
+	return archivistAgent.render(struct {
+		Folder, Objective, ExecutorResult, EvaluatorResult, MemoryFile string
+	}{folder, objective, executorResult, evaluatorResult, memoryFile})
 }
 
 // StandalonePrompt generates the standalone prompt with the project folder.
-func StandalonePrompt(folder, memoryFile string) Prompt {
-	return standaloneAgent.render(struct{ Folder, MemoryFile string }{folder, memoryFile})
+func StandalonePrompt(folder string) Prompt {
+	return standaloneAgent.render(struct{ Folder string }{folder})
 }

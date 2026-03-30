@@ -21,12 +21,18 @@ func TestParseArgs(t *testing.T) {
 		rounds  int
 		pattern string
 	}{
-		{"default", []string{"/tmp"}, false, "claude", 0, "strategist-executor"},
-		{"codex", []string{"--backend", "codex", "/tmp"}, false, "codex", 0, "strategist-executor"},
-		{"rounds", []string{"--max-rounds", "5", "/tmp"}, false, "claude", 5, "strategist-executor"},
+		{"default", []string{"/tmp"}, false, "claude", 0, "think+act"},
+		{"codex", []string{"--backend", "codex", "/tmp"}, false, "codex", 0, "think+act"},
+		{"rounds", []string{"--max-rounds", "5", "/tmp"}, false, "claude", 5, "think+act"},
 		{"standalone", []string{"--pattern", "standalone", "/tmp"}, false, "claude", 0, "standalone"},
 		{"builder alias", []string{"--pattern", "builder", "/tmp"}, false, "claude", 0, "standalone"},
-		{"think-act alias", []string{"--pattern", "think-act", "/tmp"}, false, "claude", 0, "strategist-executor"},
+		{"think-act alias", []string{"--pattern", "think-act", "/tmp"}, false, "claude", 0, "think+act"},
+		{"strategist-executor alias", []string{"--pattern", "strategist-executor", "/tmp"}, false, "claude", 0, "think+act"},
+		{"evaluator", []string{"--pattern", "think+act+evaluator", "/tmp"}, false, "claude", 0, "think+act+evaluator"},
+		{"tester alias", []string{"--pattern", "think+act+tester", "/tmp"}, false, "claude", 0, "think+act+evaluator"},
+		{"archivist", []string{"--pattern", "think+act+evaluator+archivist", "/tmp"}, false, "claude", 0, "think+act+evaluator+archivist"},
+		{"documenter alias", []string{"--pattern", "think+act+tester+documenter", "/tmp"}, false, "claude", 0, "think+act+evaluator+archivist"},
+		{"pipeline alias", []string{"--pattern", "pipeline", "/tmp"}, false, "claude", 0, "think+act+evaluator+archivist"},
 		{"no folder", []string{}, true, "", 0, ""},
 		{"bad backend", []string{"--backend", "gpt", "/tmp"}, true, "", 0, ""},
 		{"bad pattern", []string{"--pattern", "bad", "/tmp"}, true, "", 0, ""},
@@ -72,14 +78,31 @@ func (m *runMock) RunWorker(ctx context.Context, _ string, _ prompt.Prompt) ([]b
 	}
 	return []byte(`{"result":"done"}`), nil
 }
-func (m *runMock) RunCommitter(_ context.Context, _ string, _ prompt.Prompt) (string, error) {
-	return "", nil
+func (m *runMock) RunArchivist(ctx context.Context, _ string, _ prompt.Prompt) ([]byte, error) {
+	if ctx.Err() != nil {
+		return nil, ctx.Err()
+	}
+	return []byte(`{"result":"documented"}`), nil
 }
 
 var _ backend.Backend = (*runMock)(nil)
 
 func TestRunStrategistExecutor(t *testing.T) {
-	err := run(context.Background(), config{backendName: "claude", pattern: "strategist-executor", maxRounds: 1, folder: t.TempDir()}, &runMock{})
+	err := run(context.Background(), config{backendName: "claude", pattern: "think+act", maxRounds: 1, folder: t.TempDir()}, &runMock{})
+	if err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestRunThinkActEvaluator(t *testing.T) {
+	err := run(context.Background(), config{backendName: "claude", pattern: "think+act+evaluator", maxRounds: 1, folder: t.TempDir()}, &runMock{})
+	if err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestRunThinkActEvaluatorArchivist(t *testing.T) {
+	err := run(context.Background(), config{backendName: "claude", pattern: "think+act+evaluator+archivist", maxRounds: 1, folder: t.TempDir()}, &runMock{})
 	if err != nil {
 		t.Fatal(err)
 	}

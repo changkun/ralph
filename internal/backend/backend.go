@@ -11,7 +11,7 @@ import (
 type Backend interface {
 	RunThinker(ctx context.Context, folder string, p prompt.Prompt) ([]byte, error)
 	RunWorker(ctx context.Context, folder string, p prompt.Prompt) ([]byte, error)
-	RunCommitter(ctx context.Context, folder string, p prompt.Prompt) (string, error)
+	RunArchivist(ctx context.Context, folder string, p prompt.Prompt) ([]byte, error)
 }
 
 // Result is the JSON structure returned by LLM backends.

@@ -47,3 +47,28 @@ func TestHasChangesNonGit(t *testing.T) {
 		t.Error("should return false")
 	}
 }
+
+func TestHasUpstream(t *testing.T) {
+	dir := initRepo(t)
+	if HasUpstream(dir) {
+		t.Error("repo without remote should not have upstream")
+	}
+}
+
+func TestCommitAllWithoutUpstream(t *testing.T) {
+	dir := initRepo(t)
+	os.WriteFile(filepath.Join(dir, "file.txt"), []byte("hello"), 0o644)
+	committed, pushed, err := CommitAll(dir, "test commit")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !committed {
+		t.Fatal("expected commit to be created")
+	}
+	if pushed {
+		t.Fatal("expected push to be skipped without upstream")
+	}
+	if HasChanges(dir) {
+		t.Fatal("expected clean working tree after commit")
+	}
+}

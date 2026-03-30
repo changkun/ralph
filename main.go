@@ -2,7 +2,7 @@
 //
 // Usage:
 //
-//	ralph [--backend claude|codex] [--pattern standalone|strategist-executor] [--max-rounds N] <folder>
+//	ralph [--backend claude|codex] [--pattern standalone|think+act|think+act+evaluator|think+act+evaluator+archivist] [--max-rounds N] <folder>
 package main
 
 import (
@@ -26,15 +26,21 @@ type config struct {
 }
 
 const (
-	patternStandalone         = "standalone"
-	patternStrategistExecutor = "strategist-executor"
-	patternUsage              = patternStandalone + "|" + patternStrategistExecutor
+	patternStandalone                 = "standalone"
+	patternThinkAct                   = "think+act"
+	patternThinkActEvaluator          = "think+act+evaluator"
+	patternThinkActEvaluatorArchivist = "think+act+evaluator+archivist"
+	patternUsage                      = patternStandalone + "|" + patternThinkAct + "|" + patternThinkActEvaluator + "|" + patternThinkActEvaluatorArchivist
 )
 
 func normalizePattern(pattern string) (string, bool) {
 	switch pattern {
-	case "", patternStrategistExecutor, "think-act", "think_act":
-		return patternStrategistExecutor, true
+	case "", patternThinkAct, "think-act", "think_act", "strategist-executor":
+		return patternThinkAct, true
+	case patternThinkActEvaluator, "think-act-evaluator", "think_act_evaluator", "strategist-executor-evaluator", "think+act+tester", "think-act-tester", "think_act_tester", "strategist-executor-tester":
+		return patternThinkActEvaluator, true
+	case patternThinkActEvaluatorArchivist, "think-act-evaluator-archivist", "think_act_evaluator_archivist", "strategist-executor-evaluator-archivist", "think+act+tester+documenter", "think-act-tester-documenter", "think_act_tester_documenter", "full-pipeline", "pipeline":
+		return patternThinkActEvaluatorArchivist, true
 	case patternStandalone, "builder", "build-only", "build_only":
 		return patternStandalone, true
 	default:
@@ -43,7 +49,7 @@ func normalizePattern(pattern string) (string, bool) {
 }
 
 func parseArgs(args []string) (config, error) {
-	cfg := config{backendName: "claude", pattern: patternStrategistExecutor}
+	cfg := config{backendName: "claude", pattern: patternThinkAct}
 	for len(args) > 0 {
 		switch args[0] {
 		case "--backend":
@@ -85,7 +91,7 @@ func parseArgs(args []string) (config, error) {
 	var ok bool
 	cfg.pattern, ok = normalizePattern(cfg.pattern)
 	if !ok {
-		return cfg, fmt.Errorf("pattern must be '%s' or '%s', got '%s'", patternStandalone, patternStrategistExecutor, cfg.pattern)
+		return cfg, fmt.Errorf("pattern must be one of '%s', got '%s'", patternUsage, cfg.pattern)
 	}
 	var err error
 	cfg.folder, err = filepath.Abs(cfg.folder)
@@ -99,13 +105,13 @@ func run(ctx context.Context, cfg config, be backend.Backend) error {
 	var ok bool
 	cfg.pattern, ok = normalizePattern(cfg.pattern)
 	if !ok {
-		return fmt.Errorf("pattern must be '%s' or '%s', got '%s'", patternStandalone, patternStrategistExecutor, cfg.pattern)
+		return fmt.Errorf("pattern must be one of '%s', got '%s'", patternUsage, cfg.pattern)
 	}
 	ralphDir := filepath.Join(cfg.folder, ".ralph")
 	if err := os.MkdirAll(ralphDir, 0o755); err != nil {
 		return err
 	}
-	round := loop.ResumeRound(ralphDir)
+	round := loop.ResumeRound(ralphDir, cfg.pattern)
 	fmt.Printf("=== Ralph loop starting ===\nBackend: %s\nPattern: %s\nFolder: %s\n", cfg.backendName, cfg.pattern, cfg.folder)
 	if round > 0 {
 		fmt.Printf("Resuming from round %d\n", round)
@@ -115,12 +121,15 @@ func run(ctx context.Context, cfg config, be backend.Backend) error {
 	}
 	fmt.Println("Press Ctrl-C to stop.")
 	fmt.Println()
-	memFile := prompt.MemoryFile(cfg.backendName)
 	switch cfg.pattern {
 	case patternStandalone:
-		loop.RunStandalone(ctx, be, cfg.folder, ralphDir, memFile, &round, cfg.maxRounds)
+		loop.RunStandalone(ctx, be, cfg.folder, ralphDir, &round, cfg.maxRounds)
+	case patternThinkActEvaluator:
+		loop.RunThinkActEvaluator(ctx, be, cfg.folder, ralphDir, &round, cfg.maxRounds)
+	case patternThinkActEvaluatorArchivist:
+		loop.RunThinkActEvaluatorArchivist(ctx, be, cfg.folder, ralphDir, prompt.MemoryFile(cfg.backendName), &round, cfg.maxRounds)
 	default:
-		loop.RunStrategistExecutor(ctx, be, cfg.folder, ralphDir, memFile, &round, cfg.maxRounds)
+		loop.RunThinkAct(ctx, be, cfg.folder, ralphDir, &round, cfg.maxRounds)
 	}
 	return nil
 }
