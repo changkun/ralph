@@ -50,10 +50,6 @@ func (c *Codex) RunWorker(ctx context.Context, folder string, p prompt.Prompt) (
 	return codexExec(ctx, folder, p)
 }
 
-func (c *Codex) RunCommitter(ctx context.Context, folder string, p prompt.Prompt) (string, error) {
-	raw, err := codexExec(ctx, folder, p)
-	if err != nil {
-		return "", err
-	}
-	return ExtractResult(raw), nil
+func (c *Codex) RunArchivist(ctx context.Context, folder string, p prompt.Prompt) ([]byte, error) {
+	return codexExec(ctx, folder, p)
 }

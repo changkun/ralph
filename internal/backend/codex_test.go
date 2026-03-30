@@ -31,13 +31,13 @@ func TestCodexRunWorker(t *testing.T) {
 	}
 }
 
-func TestCodexRunCommitter(t *testing.T) {
+func TestCodexRunArchivist(t *testing.T) {
 	fakeBin(t, "codex", codexScript)
-	r, err := (&Codex{}).RunCommitter(context.Background(), t.TempDir(), testPrompt)
+	raw, err := (&Codex{}).RunArchivist(context.Background(), t.TempDir(), testPrompt)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if r != "output\n" {
+	if r := ExtractResult(raw); r != "output\n" {
 		t.Errorf("got %q", r)
 	}
 }
@@ -50,9 +50,9 @@ func TestCodexCreateTempErr(t *testing.T) {
 	}
 }
 
-func TestCodexCommitterCreateTempErr(t *testing.T) {
+func TestCodexArchivistCreateTempErr(t *testing.T) {
 	t.Setenv("TMPDIR", "/nonexistent_ralph_test_dir")
-	_, err := (&Codex{}).RunCommitter(context.Background(), "/dummy", testPrompt)
+	_, err := (&Codex{}).RunArchivist(context.Background(), "/dummy", testPrompt)
 	if err == nil {
 		t.Error("expected error")
 	}

@@ -42,20 +42,20 @@ func TestClaudeRunWorker(t *testing.T) {
 	}
 }
 
-func TestClaudeRunCommitter(t *testing.T) {
-	fakeBin(t, "claude", `echo '{"result":"committed"}'`)
-	r, err := (&Claude{}).RunCommitter(context.Background(), t.TempDir(), testPrompt)
+func TestClaudeRunArchivist(t *testing.T) {
+	fakeBin(t, "claude", `echo '{"result":"documented"}'`)
+	raw, err := (&Claude{}).RunArchivist(context.Background(), t.TempDir(), testPrompt)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if r != "committed" {
+	if r := ExtractResult(raw); r != "documented" {
 		t.Errorf("got %q", r)
 	}
 }
 
-func TestClaudeRunCommitterErr(t *testing.T) {
+func TestClaudeRunArchivistErr(t *testing.T) {
 	fakeBin(t, "claude", `exit 1`)
-	_, err := (&Claude{}).RunCommitter(context.Background(), t.TempDir(), testPrompt)
+	_, err := (&Claude{}).RunArchivist(context.Background(), t.TempDir(), testPrompt)
 	if err == nil {
 		t.Error("expected error")
 	}

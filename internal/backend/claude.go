@@ -29,10 +29,6 @@ func (c *Claude) RunWorker(ctx context.Context, folder string, p prompt.Prompt) 
 	return claudeExec(ctx, folder, p)
 }
 
-func (c *Claude) RunCommitter(ctx context.Context, folder string, p prompt.Prompt) (string, error) {
-	out, err := claudeExec(ctx, folder, p)
-	if err != nil {
-		return "", err
-	}
-	return ExtractResult(out), nil
+func (c *Claude) RunArchivist(ctx context.Context, folder string, p prompt.Prompt) ([]byte, error) {
+	return claudeExec(ctx, folder, p)
 }
