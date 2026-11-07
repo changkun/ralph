@@ -387,6 +387,7 @@ func (u *UI) stop() {
 func (u *UI) showView(v int) {
 	u.view, u.following = v, true
 	u.entryList.Position = layout.Position{}
+	u.entryScroll.forget()
 }
 
 // poll rereads the session's status and logs.
@@ -414,6 +415,7 @@ func (u *UI) poll() {
 	if u.view >= len(u.turns)+firstTurnView {
 		u.showView(viewLive)
 	}
+	old := u.entries
 	switch u.view {
 	case viewLive:
 		u.entries = u.liveEntries()
@@ -421,6 +423,11 @@ func (u *UI) poll() {
 		u.entries = u.consoleEntries(0)
 	default:
 		u.entries = u.turnEntries(u.turns[u.view-firstTurnView])
+	}
+	// Entries usually only grow at the end. Otherwise those already
+	// measured may have moved.
+	if len(old) > 0 && (len(u.entries) < len(old) || !sameEntry(u.entries[0], old[0])) {
+		u.entryScroll.forget()
 	}
 	for len(u.expandBtns) < len(u.entries) {
 		u.expandBtns = append(u.expandBtns, widget.Clickable{})
@@ -466,6 +473,11 @@ func (u *UI) consoleEntries(n int) []entry {
 		es[i] = entry{kind: entryConsole, text: line, first: i == 0, last: i == len(lines)-1}
 	}
 	return es
+}
+
+// sameEntry reports whether a and b show the same thing.
+func sameEntry(a, b entry) bool {
+	return a.kind == b.kind && a.turn == b.turn && a.key == b.key && a.text == b.text
 }
 
 // turnEntries returns a turn's heading and events.
@@ -577,6 +589,7 @@ func (u *UI) update(gtx layout.Context) {
 	if u.markdownOn.Update(gtx) {
 		u.prefs.PlainText = !u.markdownOn.Value
 		u.prefs.save()
+		u.entryScroll.forget()
 	}
 	if time.Since(u.lastPoll) >= pollInterval-50*time.Millisecond {
 		u.poll()

@@ -478,6 +478,45 @@ func (tp *fakePad) scroll(dy float32, e trackpad.Event) {
 	tp.u.testRouter().Queue(pointer.Event{Kind: pointer.Scroll, Source: pointer.Mouse, Position: tp.at, Scroll: f32.Pt(0, dy), Time: tp.time})
 }
 
+// TestScrollIndicator drags the scroll indicator, whose place comes from
+// the measured heights of all elements.
+func TestScrollIndicator(t *testing.T) {
+	folder := project(t)
+	var log strings.Builder
+	for i := range 400 {
+		log.WriteString("line " + strconv.Itoa(i) + "\n")
+	}
+	write(t, filepath.Join(folder, session.LocalDir, "engine.log"), log.String())
+	u := newUI(nil, folder)
+	u.showView(viewConsole)
+	u.poll()
+	now := time.Now()
+	for range 3 {
+		frameAt(t, u, now)
+	}
+	s, l := &u.entryScroll, &u.entryList
+	for _, h := range s.sizes {
+		if h < 0 {
+			t.Fatal("elements out of view are not measured")
+		}
+	}
+
+	// At the end, the indicator is at the bottom of the pane. Dragging it
+	// to the top shows the first line.
+	x := float32(width - 4)
+	u.testRouter().Queue(
+		pointer.Event{Kind: pointer.Press, Source: pointer.Mouse, Buttons: pointer.ButtonPrimary, Position: f32.Pt(x, height-20)},
+		pointer.Event{Kind: pointer.Move, Source: pointer.Mouse, Buttons: pointer.ButtonPrimary, Position: f32.Pt(x, 0)},
+		pointer.Event{Kind: pointer.Release, Source: pointer.Mouse, Position: f32.Pt(x, 0)},
+	)
+	for range 2 {
+		frameAt(t, u, now)
+	}
+	if u.following || l.Position.First != 0 || l.Position.Offset != 0 {
+		t.Errorf("following = %v, position = %+v; want the top", u.following, l.Position)
+	}
+}
+
 func TestStretch(t *testing.T) {
 	for _, x := range []float32{-500, -1, 0, 1, 50, 300, 5000} {
 		y := stretch(x, 800)

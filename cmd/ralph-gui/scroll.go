@@ -100,6 +100,14 @@ type scroller struct {
 	ignore   uint64        // a gesture whose momentum is ignored, because it bounced or the fingers let go of a stretch
 	frame    time.Time     // the previous frame
 	shown    time.Time     // when the scroll indicator was last needed
+
+	// The height of each element, or -1 if not yet measured, and the
+	// constraints and width the list lays them out with. The indicator's
+	// place comes from these, rather than from the heights of the
+	// elements in view, which vary too much for it to hold still.
+	sizes []int
+	cs    layout.Constraints
+	width int
 }
 
 // scrollKind is what scrolls a list.
@@ -123,19 +131,37 @@ const (
 	maxBounce     = 3000                   // dp per second; the fastest a bounce starts
 	indicatorHold = 700 * time.Millisecond // how long the indicator stays after scrolling
 	indicatorFade = 250 * time.Millisecond
+	measureBudget = 3 * time.Millisecond // how long a frame may spend measuring elements out of view
 )
 
 // layout lays out n elements of l, as material.List does.
 func (s *scroller) layout(gtx C, th *material.Theme, l *widget.List, n int, el layout.ListElement) D {
 	size := gtx.Constraints.Max
 	s.update(gtx, &l.List, n, float32(size.Y))
+	if size.X != s.width {
+		s.width = size.X
+		s.forget()
+	}
+	for len(s.sizes) < n {
+		s.sizes = append(s.sizes, -1)
+	}
+	s.sizes = s.sizes[:n]
 
-	ls := material.List(th, l)
-	ls.AnchorStrategy = material.Overlay
-	ls.Track.Color = color.NRGBA{}
-	ls.Track.MinorPadding = 2
-	ls.Indicator.MinorWidth = 7
-	ls.Indicator.CornerRadius = 3.5
+	shift := image.Pt(0, -int(math.Round(float64(s.y))))
+	l.List.Layout(gtx, n, func(gtx C, i int) D {
+		s.cs = gtx.Constraints
+		defer op.Offset(shift).Push(gtx.Ops).Pop()
+		dims := el(gtx, i)
+		s.sizes[i] = dims.Size.Y
+		return dims
+	})
+	s.measure(gtx, el)
+
+	sb := material.Scrollbar(th, &l.Scrollbar)
+	sb.Track.Color = color.NRGBA{}
+	sb.Track.MinorPadding = 2
+	sb.Indicator.MinorWidth = 7
+	sb.Indicator.CornerRadius = 3.5
 	if s.touching || l.Scrollbar.Dragging() || l.Scrollbar.IndicatorHovered() {
 		s.shown = gtx.Now
 	}
@@ -143,14 +169,21 @@ func (s *scroller) layout(gtx C, th *material.Theme, l *widget.List, n int, el l
 	if alpha > 0 {
 		gtx.Execute(op.InvalidateCmd{})
 	}
-	ls.Indicator.Color = color.NRGBA{A: uint8(0x60 * alpha)}
-	ls.Indicator.HoverColor = color.NRGBA{A: uint8(0x90 * alpha)}
-
-	shift := image.Pt(0, -int(math.Round(float64(s.y))))
-	ls.Layout(gtx, n, func(gtx C, i int) D {
-		defer op.Offset(shift).Push(gtx.Ops).Pop()
-		return el(gtx, i)
+	sb.Indicator.Color = color.NRGBA{A: uint8(0x60 * alpha)}
+	sb.Indicator.HoverColor = color.NRGBA{A: uint8(0x90 * alpha)}
+	hs := s.heights()
+	top, total := offset(hs, l.Position), float32(0)
+	for _, h := range hs {
+		total += h
+	}
+	total = max(total, 1)
+	gtx.Constraints.Min = size
+	layout.E.Layout(gtx, func(gtx C) D {
+		return sb.Layout(gtx, layout.Vertical, top/total, (top+float32(size.Y))/total)
 	})
+	if d := l.Scrollbar.ScrollDistance(); d != 0 {
+		jump(&l.List, hs, top+d*total)
+	}
 
 	// Take all vertical scrolling over the list, on top of it, and let
 	// other events through to the list and its content.
@@ -161,6 +194,78 @@ func (s *scroller) layout(gtx C, th *material.Theme, l *widget.List, n int, el l
 	// aligns its children, such as a Stack, would otherwise move the list
 	// away from the top, and the area that takes scrolling with it.
 	return D{Size: size}
+}
+
+// forget forgets the heights of the elements, which have changed.
+func (s *scroller) forget() {
+	for i := range s.sizes {
+		s.sizes[i] = -1
+	}
+}
+
+// measure measures elements out of view that are not yet measured, for a
+// while each frame.
+func (s *scroller) measure(gtx C, el layout.ListElement) {
+	if s.cs == (layout.Constraints{}) {
+		return // the list has laid nothing out to measure with
+	}
+	start := time.Now()
+	gtx.Constraints = s.cs
+	m := op.Record(gtx.Ops)
+	defer m.Stop() // and drop what was drawn
+	for i, h := range s.sizes {
+		if h >= 0 {
+			continue
+		}
+		if time.Since(start) > measureBudget {
+			gtx.Execute(op.InvalidateCmd{}) // to measure the rest
+			return
+		}
+		s.sizes[i] = el(gtx, i).Size.Y
+	}
+}
+
+// heights returns the height of each element: as measured, or else the
+// average of those measured.
+func (s *scroller) heights() []float32 {
+	sum, n := 0, 0
+	for _, h := range s.sizes {
+		if h >= 0 {
+			sum, n = sum+h, n+1
+		}
+	}
+	avg := float32(sum) / float32(max(n, 1))
+	hs := make([]float32, len(s.sizes))
+	for i, h := range s.sizes {
+		hs[i] = avg
+		if h >= 0 {
+			hs[i] = float32(h)
+		}
+	}
+	return hs
+}
+
+// offset returns how far down elements of heights hs p is.
+func offset(hs []float32, p layout.Position) float32 {
+	y := float32(p.Offset)
+	for _, h := range hs[:min(p.First, len(hs))] {
+		y += h
+	}
+	return y
+}
+
+// jump moves l to y pixels down its elements, of heights hs.
+func jump(l *layout.List, hs []float32, y float32) {
+	if y < offset(hs, l.Position) {
+		l.Position.BeforeEnd = true
+	}
+	first := 0
+	for first < len(hs)-1 && y >= hs[first] {
+		y -= hs[first]
+		first++
+	}
+	l.Position.First, l.Position.Offset = first, int(max(0, y))
+	l.Position.Count = 0 // unknown until the list is laid out again
 }
 
 // update applies this frame's scrolling to l, which has n elements and a
