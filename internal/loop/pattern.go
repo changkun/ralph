@@ -20,8 +20,14 @@ const (
 	ThinkActEvaluatorArchivist Pattern = "think+act+evaluator+archivist"
 )
 
-// Patterns lists the supported patterns, from fewest roles to most.
+// Patterns lists the patterns that run in rounds, from fewest roles to
+// most.
 var Patterns = []Pattern{Standalone, ThinkAct, ThinkActEvaluator, ThinkActEvaluatorArchivist}
+
+// Thinkers is the pattern that runs thinkers side by side, each once and
+// alone in an empty folder, rather than rounds. ParsePattern accepts it,
+// but Run does not run it; the session package does.
+const Thinkers Pattern = "thinkers"
 
 // patternNames maps every accepted pattern name, with "+" as the only
 // separator, to its pattern. Besides the canonical names it holds the
@@ -44,6 +50,8 @@ var patternNames = map[string]Pattern{
 	"strategist+executor+evaluator+archivist": ThinkActEvaluatorArchivist,
 	"pipeline":      ThinkActEvaluatorArchivist,
 	"full+pipeline": ThinkActEvaluatorArchivist,
+
+	"thinkers": Thinkers,
 }
 
 // ParsePattern returns the pattern called name. It accepts the canonical
@@ -53,9 +61,9 @@ func ParsePattern(name string) (Pattern, error) {
 	if p, ok := patternNames[key]; ok {
 		return p, nil
 	}
-	names := make([]string, len(Patterns))
-	for i, p := range Patterns {
-		names[i] = string(p)
+	var names []string
+	for _, p := range append(slices.Clone(Patterns), Thinkers) {
+		names = append(names, string(p))
 	}
 	return "", fmt.Errorf("unknown pattern %q; want one of %s", name, strings.Join(names, ", "))
 }
@@ -65,6 +73,8 @@ func (p Pattern) Roles() []backend.Role {
 	switch p {
 	case Standalone:
 		return []backend.Role{backend.Standalone}
+	case Thinkers:
+		return []backend.Role{backend.Thinker}
 	case ThinkActEvaluator:
 		return []backend.Role{backend.Strategist, backend.Executor, backend.Evaluator}
 	case ThinkActEvaluatorArchivist:

@@ -19,14 +19,16 @@ import (
 // round log files (round-NNN-<role>.json and .jsonl) Ralph writes for it.
 type Role string
 
-// Agent roles. Standalone is the only role in the standalone pattern; the
-// others make up the strategist pipeline.
+// Agent roles. Standalone is the only role in the standalone pattern, and
+// Thinker the only one in the thinkers pattern; the others make up the
+// strategist pipeline.
 const (
 	Strategist Role = "strategist"
 	Executor   Role = "executor"
 	Evaluator  Role = "evaluator"
 	Archivist  Role = "archivist"
 	Standalone Role = "standalone"
+	Thinker    Role = "thinker"
 )
 
 // ReadOnly reports whether role only reasons about the project and so must
