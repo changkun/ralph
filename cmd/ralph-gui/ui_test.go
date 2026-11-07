@@ -5,6 +5,7 @@ import (
 	"image/png"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -490,15 +491,16 @@ func TestScrollIndicator(t *testing.T) {
 	u := newUI(nil, folder)
 	u.showView(viewConsole)
 	u.poll()
-	now := time.Now()
-	for range 3 {
-		frameAt(t, u, now)
-	}
+	// The scroller measures elements for a few milliseconds a frame, so
+	// how many frames it takes depends on the machine.
 	s, l := &u.entryScroll, &u.entryList
-	for _, h := range s.sizes {
-		if h < 0 {
+	measured := func() bool { return len(s.sizes) > 0 && !slices.Contains(s.sizes, -1) }
+	now := time.Now()
+	for i := 0; !measured(); i++ {
+		if i == 100 {
 			t.Fatal("elements out of view are not measured")
 		}
+		frameAt(t, u, now)
 	}
 
 	// At the end, the indicator is at the bottom of the pane. Dragging it
