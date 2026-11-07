@@ -546,6 +546,10 @@ func (u *UI) layoutEntries(gtx C) D {
 			})
 			if l.ScrollToEnd {
 				u.following = !l.Position.BeforeEnd
+			} else if follow && u.following && l.Position.Length > gtx.Constraints.Max.Y {
+				// It no longer fits: move to its end in the next frame
+				// rather than at the next poll.
+				gtx.Execute(op.InvalidateCmd{})
 			}
 			return dims
 		}),

@@ -348,6 +348,21 @@ func TestFollow(t *testing.T) {
 	if l.ScrollToEnd || l.Position.Offset != 0 {
 		t.Errorf("scroll to end = %v, position = %+v; want the top", l.ScrollToEnd, l.Position)
 	}
+
+	// Once it no longer fits, the view moves to its end.
+	write(t, filepath.Join(folder, session.LocalDir, "engine.log"), "one line\n"+log.String())
+	u.poll()
+	for range 2 {
+		frame(t, u)
+	}
+	if !u.following || l.Position.BeforeEnd || l.Position.Offset == 0 {
+		t.Errorf("following = %v, position = %+v; want the end", u.following, l.Position)
+	}
+	write(t, filepath.Join(folder, session.LocalDir, "engine.log"), "one line\n")
+	u.poll()
+	for range 3 {
+		frame(t, u)
+	}
 	scroll(u, 1000, 500, -100)
 	frame(t, u)
 	if u.entryElastic.offset <= 0 {
