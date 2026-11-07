@@ -11,8 +11,8 @@ import (
 )
 
 // RunStandalone executes the standalone loop: a single agent decides and acts
-// in each round.
-func RunStandalone(ctx context.Context, be backend.Backend, folder, ralphDir string, round *int, maxRounds int) {
+// in each round. It stops like RunThinkAct.
+func RunStandalone(ctx context.Context, be backend.Backend, folder, ralphDir string, round *int, maxRounds int) error {
 	for maxRounds == 0 || *round < maxRounds {
 		*round++
 		prefix := filepath.Join(ralphDir, fmt.Sprintf("round-%03d", *round))
@@ -20,8 +20,8 @@ func RunStandalone(ctx context.Context, be backend.Backend, folder, ralphDir str
 		fmt.Printf("%s\n  Round %d — Standalone...\n%s\n", separator, *round, separator)
 
 		raw, err := be.RunWorker(ctx, folder, prompt.StandalonePrompt(folder))
-		if interrupted(ctx, err) {
-			return
+		if err != nil {
+			return agentError(ctx, "standalone", err)
 		}
 		os.MkdirAll(ralphDir, 0o755)
 		_ = os.WriteFile(prefix+"-standalone.json", raw, 0o644)
@@ -35,4 +35,5 @@ func RunStandalone(ctx context.Context, be backend.Backend, folder, ralphDir str
 		fmt.Printf("\n%s\n", result)
 		finishRound(folder, *round, result)
 	}
+	return nil
 }

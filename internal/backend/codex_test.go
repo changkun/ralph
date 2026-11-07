@@ -2,6 +2,7 @@ package backend
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	"github.com/changkun/ralph/internal/prompt"
@@ -60,12 +61,25 @@ func TestCodexArchivistCreateTempErr(t *testing.T) {
 
 func TestCodexReadFileErr(t *testing.T) {
 	fakeBin(t, "codex", `while [ $# -gt 0 ]; do case "$1" in -o) rm -f "$2"; shift 2;; *) shift;; esac; done`)
-	raw, err := (&Codex{}).RunThinker(context.Background(), t.TempDir(), testPrompt)
-	if err != nil {
-		t.Fatal(err)
+	if _, err := (&Codex{}).RunThinker(context.Background(), t.TempDir(), testPrompt); err == nil {
+		t.Error("expected an error when codex leaves no output file")
 	}
-	if r := ExtractResult(raw); r != "" {
-		t.Errorf("got %q, want empty", r)
+}
+
+func TestCodexRunFailure(t *testing.T) {
+	fakeBin(t, "codex", `echo 'error: unexpected argument' >&2; exit 2`)
+	_, err := (&Codex{}).RunWorker(context.Background(), t.TempDir(), testPrompt)
+	if err == nil || !strings.Contains(err.Error(), "unexpected argument") {
+		t.Errorf("err = %v, want it to include stderr", err)
+	}
+}
+
+func TestCodexRunCancelled(t *testing.T) {
+	fakeBin(t, "codex", codexScript)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if _, err := (&Codex{}).RunWorker(ctx, t.TempDir(), testPrompt); err == nil {
+		t.Error("expected an error from a cancelled run")
 	}
 }
 

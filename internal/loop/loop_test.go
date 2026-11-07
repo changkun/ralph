@@ -95,7 +95,9 @@ func TestThinkerCancel(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 	r := 0
-	RunThinkAct(ctx, &mockBE{fail(), ok(""), nil}, dir, rd, &r, 0)
+	if err := RunThinkAct(ctx, &mockBE{fail(), ok(""), nil}, dir, rd, &r, 0); err != nil {
+		t.Errorf("err = %v, want nil after an interrupt", err)
+	}
 }
 
 func TestWorkerCancel(t *testing.T) {
@@ -103,7 +105,34 @@ func TestWorkerCancel(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	r := 0
 	be := &mockBE{ok("idea"), func() (string, error) { cancel(); return "", errors.New("e") }, nil}
-	RunThinkAct(ctx, be, dir, rd, &r, 0)
+	if err := RunThinkAct(ctx, be, dir, rd, &r, 0); err != nil {
+		t.Errorf("err = %v, want nil after an interrupt", err)
+	}
+}
+
+func TestStopsOnAgentError(t *testing.T) {
+	dir, rd := setup(t)
+	r := 0
+	be := &mockBE{ok("idea"), func() (string, error) { return "", errors.New("not logged in") }, nil}
+	err := RunThinkActEvaluator(context.Background(), be, dir, rd, &r, 0)
+	if err == nil || err.Error() != "executor: not logged in" {
+		t.Errorf("err = %v, want %q", err, "executor: not logged in")
+	}
+	if r != 1 {
+		t.Errorf("round=%d, want 1", r)
+	}
+	if _, err := os.Stat(filepath.Join(rd, "round-001-executor.json")); !os.IsNotExist(err) {
+		t.Errorf("executor log written for a failed run: %v", err)
+	}
+}
+
+func TestStandaloneStopsOnAgentError(t *testing.T) {
+	dir, rd := setup(t)
+	r := 0
+	err := RunStandalone(context.Background(), &mockBE{nil, fail(), nil}, dir, rd, &r, 0)
+	if err == nil || err.Error() != "standalone: err" {
+		t.Errorf("err = %v, want %q", err, "standalone: err")
+	}
 }
 
 func TestGitCommit(t *testing.T) {

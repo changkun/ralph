@@ -123,15 +123,14 @@ func run(ctx context.Context, cfg config, be backend.Backend) error {
 	fmt.Println()
 	switch cfg.pattern {
 	case patternStandalone:
-		loop.RunStandalone(ctx, be, cfg.folder, ralphDir, &round, cfg.maxRounds)
+		return loop.RunStandalone(ctx, be, cfg.folder, ralphDir, &round, cfg.maxRounds)
 	case patternThinkActEvaluator:
-		loop.RunThinkActEvaluator(ctx, be, cfg.folder, ralphDir, &round, cfg.maxRounds)
+		return loop.RunThinkActEvaluator(ctx, be, cfg.folder, ralphDir, &round, cfg.maxRounds)
 	case patternThinkActEvaluatorArchivist:
-		loop.RunThinkActEvaluatorArchivist(ctx, be, cfg.folder, ralphDir, prompt.MemoryFile(cfg.backendName), &round, cfg.maxRounds)
+		return loop.RunThinkActEvaluatorArchivist(ctx, be, cfg.folder, ralphDir, prompt.MemoryFile(cfg.backendName), &round, cfg.maxRounds)
 	default:
-		loop.RunThinkAct(ctx, be, cfg.folder, ralphDir, &round, cfg.maxRounds)
+		return loop.RunThinkAct(ctx, be, cfg.folder, ralphDir, &round, cfg.maxRounds)
 	}
-	return nil
 }
 
 var osExit = os.Exit
