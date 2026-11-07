@@ -3,7 +3,6 @@ package prompt
 import (
 	"strings"
 	"testing"
-	"text/template"
 )
 
 var round = Round{
@@ -13,49 +12,100 @@ var round = Round{
 	EvaluatorResult: "tests passed",
 }
 
-func TestPrompts(t *testing.T) {
+func TestDefaults(t *testing.T) {
 	tests := []struct {
-		name       string
-		p          Prompt
-		wantSystem bool
-		wantUser   []string
+		role     string
+		wantUser []string
 	}{
-		{"strategist", Strategist(), true, []string{"ONE objective"}},
-		{"executor", Executor(round), true, []string{round.Folder, round.Objective}},
-		{"evaluator", Evaluator(round), true, []string{round.Folder, round.Objective, round.ExecutorResult}},
-		{"archivist", Archivist(round), true, []string{round.Folder, round.Objective, round.ExecutorResult, round.EvaluatorResult, "AGENTS.md"}},
-		{"standalone", Standalone(round.Folder), true, []string{round.Folder}},
+		{"strategist", []string{"ONE objective"}},
+		{"executor", []string{round.Folder, round.Objective}},
+		{"evaluator", []string{round.Folder, round.Objective, round.ExecutorResult}},
+		{"archivist", []string{round.Folder, round.Objective, round.ExecutorResult, round.EvaluatorResult, "AGENTS.md"}},
+		{"standalone", []string{round.Folder}},
 	}
 	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			if got := tt.p.System != ""; got != tt.wantSystem {
-				t.Errorf("has system prompt = %v, want %v", got, tt.wantSystem)
+		t.Run(tt.role, func(t *testing.T) {
+			p, err := ForRole(tt.role).Render(round)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if p.System == "" {
+				t.Error("empty system prompt")
 			}
 			for _, want := range tt.wantUser {
-				if !strings.Contains(tt.p.User, want) {
-					t.Errorf("user prompt does not contain %q:\n%s", want, tt.p.User)
+				if !strings.Contains(p.User, want) {
+					t.Errorf("user prompt does not contain %q:\n%s", want, p.User)
 				}
 			}
 		})
 	}
 }
 
-func TestRenderPanicsOnTemplateError(t *testing.T) {
-	defer func() {
-		if recover() == nil {
-			t.Error("expected a panic")
-		}
-	}()
-	bad := template.Must(template.New("bad").Parse(
-		`{{define "system"}}ok{{end}}{{define "prompt"}}{{.Missing.Field}}{{end}}`))
-	render(bad, "not a struct")
+// TestDefaultTextRoundTrips checks that the editable text of each built-in
+// template renders exactly like the template itself.
+func TestDefaultTextRoundTrips(t *testing.T) {
+	for role := range defaults {
+		t.Run(role, func(t *testing.T) {
+			text, ok := Default(role)
+			if !ok {
+				t.Fatal("no default text")
+			}
+			if strings.Contains(text.Prompt, "{{define") || strings.Contains(text.Prompt, "{{end}}") {
+				t.Errorf("text includes template definitions:\n%s", text.Prompt)
+			}
+			parsed, err := Parse(text)
+			if err != nil {
+				t.Fatal(err)
+			}
+			got, err := parsed.Render(round)
+			if err != nil {
+				t.Fatal(err)
+			}
+			want, err := ForRole(role).Render(round)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got != want {
+				t.Errorf("rendered differently:\n got %+v\nwant %+v", got, want)
+			}
+		})
+	}
 }
 
-func TestLoadPanicsOnMissingTemplate(t *testing.T) {
+func TestParse(t *testing.T) {
+	p, err := Parse(Text{System: "Be brief.", Prompt: "Work on {{.Objective}} in {{.Folder}}."})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := p.Render(round)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := (Prompt{System: "Be brief.", User: "Work on add feature X in /tmp/project."}); got != want {
+		t.Errorf("got %+v, want %+v", got, want)
+	}
+}
+
+func TestParseErrors(t *testing.T) {
+	for _, text := range []Text{
+		{Prompt: "{{.Objective"},
+		{System: "{{if}}", Prompt: "ok"},
+		{Prompt: "{{.Goal}}"},
+	} {
+		if _, err := Parse(text); err == nil {
+			t.Errorf("Parse(%+v) succeeded, want an error", text)
+		}
+	}
+}
+
+func TestUnknownRole(t *testing.T) {
+	if _, ok := Default("planner"); ok {
+		t.Error("Default reported a template for an unknown role")
+	}
 	defer func() {
 		if recover() == nil {
-			t.Error("expected a panic")
+			t.Error("ForRole did not panic for an unknown role")
 		}
 	}()
-	load("nonexistent")
+	ForRole("planner")
 }

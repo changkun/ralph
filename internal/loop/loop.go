@@ -46,7 +46,7 @@ func Run(ctx context.Context, be backend.Backend, p Pattern, folder, ralphDir st
 		var summary string
 		var err error
 		if p == Standalone {
-			summary, err = r.step(ctx, backend.Standalone, prompt.Standalone(folder))
+			summary, err = r.step(ctx, backend.Standalone, prompt.Round{Folder: folder})
 		} else {
 			summary, err = r.pipeline(ctx, p)
 		}
@@ -77,31 +77,36 @@ type round struct {
 // archivist if p includes them. It returns the strategist's objective, or ""
 // if there was none, in which case no other role runs.
 func (r *round) pipeline(ctx context.Context, p Pattern) (string, error) {
-	objective, err := r.step(ctx, backend.Strategist, prompt.Strategist())
+	objective, err := r.step(ctx, backend.Strategist, prompt.Round{Folder: r.folder})
 	if err != nil || objective == "" {
 		return "", err
 	}
 	in := prompt.Round{Folder: r.folder, Objective: objective}
-	if in.ExecutorResult, err = r.step(ctx, backend.Executor, prompt.Executor(in)); err != nil {
+	if in.ExecutorResult, err = r.step(ctx, backend.Executor, in); err != nil {
 		return "", err
 	}
 	if p.has(backend.Evaluator) {
-		if in.EvaluatorResult, err = r.step(ctx, backend.Evaluator, prompt.Evaluator(in)); err != nil {
+		if in.EvaluatorResult, err = r.step(ctx, backend.Evaluator, in); err != nil {
 			return "", err
 		}
 	}
 	if p.has(backend.Archivist) {
-		if _, err = r.step(ctx, backend.Archivist, prompt.Archivist(in)); err != nil {
+		if _, err = r.step(ctx, backend.Archivist, in); err != nil {
 			return "", err
 		}
 	}
 	return objective, nil
 }
 
-// step runs one turn of role, saves its raw output to the round log, and
-// prints and returns the agent's final message.
-func (r *round) step(ctx context.Context, role backend.Role, p prompt.Prompt) (string, error) {
+// step runs one turn of role with its prompt rendered for in, saves the
+// CLI's raw output to the round log, and prints and returns the agent's
+// final message.
+func (r *round) step(ctx context.Context, role backend.Role, in prompt.Round) (string, error) {
 	banner(r.num, stages[role])
+	p, err := prompt.ForRole(string(role)).Render(in)
+	if err != nil {
+		return "", fmt.Errorf("%s: %w", role, err)
+	}
 	raw, err := r.be.Run(ctx, role, r.folder, p)
 	if err != nil {
 		return "", fmt.Errorf("%s: %w", role, err)
