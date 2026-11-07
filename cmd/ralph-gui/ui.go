@@ -11,10 +11,8 @@ import (
 	"time"
 
 	"gioui.org/app"
-	"gioui.org/font/gofont"
 	"gioui.org/layout"
 	"gioui.org/op"
-	"gioui.org/text"
 	"gioui.org/widget"
 	"gioui.org/widget/material"
 	"gioui.org/x/explorer"
@@ -28,11 +26,22 @@ import (
 // pollInterval is how often the app rereads the session's files.
 const pollInterval = 500 * time.Millisecond
 
+// liveRounds is how many of the latest rounds the live view shows.
+const liveRounds = 10
+
+// The views of the transcript pane. View firstTurnView+i shows turns[i].
+const (
+	viewLive      = 0 // the latest rounds, following the session
+	viewConsole   = 1 // the engine log
+	firstTurnView = 2
+)
+
 // UI is the app's state.
 type UI struct {
-	w    *app.Window // nil in tests
-	th   *material.Theme
-	expl *explorer.Explorer
+	w     *app.Window // nil in tests
+	th    *material.Theme
+	expl  *explorer.Explorer
+	prefs prefs
 
 	folder      string
 	settings    session.Settings // as the form shows them
@@ -59,17 +68,26 @@ type UI struct {
 	stopBtn   widget.Clickable
 	sidebar   widget.List
 
-	// The transcript view. View 0 is the engine log, and view i is turns[i-1].
-	turns     []session.TurnLog
-	turnBtns  []widget.Clickable
-	turnList  widget.List
-	follow    widget.Bool
-	view      int
-	shownView int // the view eventList's position belongs to
-	events    []transcript.Event
-	eventsKey string // identifies the file version events were read from
-	logLines  []string
-	eventList widget.List
+	// The columns' layout.
+	splitters      [2]splitter
+	sidebarElastic elastic
+	turnsElastic   elastic
+	entryElastic   elastic
+
+	// The transcript pane.
+	turns      []session.TurnLog
+	turnBtns   []widget.Clickable // one per view
+	turnList   widget.List
+	view       int
+	following  bool // whether the view stays at its end as it grows
+	entries    []entry
+	entryList  widget.List
+	expandBtns []widget.Clickable // one per entry
+	expanded   map[string]bool    // events whose whole output is shown
+	latestBtn  widget.Clickable
+	markdownOn widget.Bool
+	cache      map[string]turnCache // events of each turn's transcript
+	mdCache    map[string][]mdBlock // parsed Markdown by source
 }
 
 type roleForm struct {
@@ -86,16 +104,45 @@ type chosenFolder struct {
 	err  error
 }
 
+type turnCache struct {
+	key    string // the transcript file's path, size, and time
+	events []transcript.Event
+}
+
+type entryKind uint8
+
+const (
+	entryTurn    entryKind = iota // a turn's heading
+	entryEvent                    // one event of a turn
+	entryNote                     // a note about the session, such as why it failed
+	entryConsole                  // lines of the engine log
+)
+
+// entry is one item of the transcript pane.
+type entry struct {
+	kind  entryKind
+	turn  session.TurnLog
+	event transcript.Event
+	text  string
+	bad   bool
+	key   string // identifies an event, to remember whether it is expanded
+}
+
 func newUI(w *app.Window, folder string) *UI {
 	th := material.NewTheme()
-	th.Shaper = text.NewShaper(text.WithCollection(gofont.Collection()))
-	th.TextSize = 14
-	th.Palette.ContrastBg = accent
+	th.Shaper = newShaper()
+	th.Face = sans
+	th.TextSize = 15
+	th.Palette = material.Palette{Fg: ink, Bg: white, ContrastBg: accent, ContrastFg: white}
 	u := &UI{
-		w:      w,
-		th:     th,
-		chosen: make(chan chosenFolder, 1),
-		roles:  map[backend.Role]*roleForm{},
+		w:        w,
+		th:       th,
+		prefs:    loadPrefs(),
+		chosen:   make(chan chosenFolder, 1),
+		roles:    map[backend.Role]*roleForm{},
+		expanded: map[string]bool{},
+		cache:    map[string]turnCache{},
+		mdCache:  map[string][]mdBlock{},
 	}
 	if w != nil {
 		u.expl = explorer.NewExplorer(w)
@@ -104,14 +151,17 @@ func newUI(w *app.Window, folder string) *UI {
 	u.rounds.SingleLine, u.rounds.Filter = true, "0123456789"
 	u.sidebar.Axis = layout.Vertical
 	u.turnList.Axis = layout.Vertical
-	u.eventList.Axis = layout.Vertical
-	u.follow.Value = true
+	u.entryList.Axis = layout.Vertical
+	u.markdownOn.Value = !u.prefs.PlainText
 	for _, role := range session.Roles {
 		f := &roleForm{}
 		f.model.SingleLine = true
 		u.roles[role] = f
 	}
 	u.setSettings(session.Defaults())
+	if fi, err := os.Stat(u.prefs.Folder); folder == "" && err == nil && fi.IsDir() {
+		folder = u.prefs.Folder // reopen the last folder, if it is still there
+	}
 	if folder != "" {
 		u.openFolder(folder)
 	}
@@ -132,6 +182,7 @@ func (u *UI) run() error {
 		switch e := e.(type) {
 		case app.DestroyEvent:
 			u.saveSettings()
+			u.prefs.save()
 			return e.Err
 		case app.FrameEvent:
 			gtx := app.NewContext(&ops, e)
@@ -236,8 +287,12 @@ func (u *UI) openFolder(dir string) {
 	u.setSettings(s)
 	u.saved = s
 	u.launchedPID = 0
-	u.view, u.follow.Value = 0, true
-	u.events, u.eventsKey, u.logLines = nil, "", nil
+	u.showView(viewLive)
+	u.entries = nil
+	clear(u.cache)
+	clear(u.expanded)
+	u.prefs.Folder = abs
+	u.prefs.save()
 	u.poll()
 	if u.w != nil {
 		u.w.Option(app.Title("Ralph · " + filepath.Base(abs)))
@@ -264,6 +319,15 @@ func (u *UI) active() bool {
 	return u.hasStatus && u.status.Active()
 }
 
+// starting reports whether the session is getting ready to run its first
+// turn.
+func (u *UI) starting() bool {
+	if u.launchedPID != 0 {
+		return session.Alive(u.launchedPID)
+	}
+	return u.hasStatus && u.status.State == session.Starting && u.status.Active()
+}
+
 func (u *UI) start() {
 	u.message = ""
 	if u.folder == "" {
@@ -276,7 +340,7 @@ func (u *UI) start() {
 	}
 	for _, l := range u.logins {
 		if len(l.Found) == 0 {
-			u.message = fmt.Sprintf("%s has no login to use in a container: %s.", l.Backend, l.Help)
+			u.message = fmt.Sprintf("%s has no login to use in a container: %s.", backendTitle(l.Backend), l.Help)
 			return
 		}
 	}
@@ -294,7 +358,7 @@ func (u *UI) start() {
 		u.message = "Could not start: " + err.Error()
 		return
 	}
-	u.view, u.follow.Value = 0, true
+	u.showView(viewLive)
 	u.poll()
 }
 
@@ -304,6 +368,13 @@ func (u *UI) stop() {
 		u.message = err.Error()
 	}
 	u.poll()
+}
+
+// showView switches the transcript pane to view v, from its start, or
+// from its end if it follows the session.
+func (u *UI) showView(v int) {
+	u.view, u.following = v, true
+	u.entryList.Position = layout.Position{}
 }
 
 // poll rereads the session's status and logs.
@@ -321,52 +392,109 @@ func (u *UI) poll() {
 		u.logins = u.settings.Logins()
 	}
 	u.turns = session.Turns(u.folder)
-	for len(u.turnBtns) < len(u.turns)+1 {
+	for len(u.turnBtns) < len(u.turns)+firstTurnView {
 		u.turnBtns = append(u.turnBtns, widget.Clickable{})
 	}
-	if u.follow.Value {
-		u.view = u.followedView()
+	if u.view >= len(u.turns)+firstTurnView {
+		u.showView(viewLive)
 	}
-	if u.view > len(u.turns) {
-		u.view = 0
+	switch u.view {
+	case viewLive:
+		u.entries = u.liveEntries()
+	case viewConsole:
+		u.entries = u.consoleEntries(0)
+	default:
+		u.entries = u.turnEntries(u.turns[u.view-firstTurnView])
 	}
-	if u.view == 0 {
-		u.logLines = strings.Split(strings.TrimRight(session.EngineLog(u.folder, 256<<10), "\n"), "\n")
-		return
+	for len(u.expandBtns) < len(u.entries) {
+		u.expandBtns = append(u.expandBtns, widget.Clickable{})
 	}
-	u.loadEvents(u.turns[u.view-1].Path)
 }
 
-// followedView returns the view to show when following the session: the
-// engine log while it starts or after it failed, and the latest turn
-// otherwise.
-func (u *UI) followedView() int {
-	switch {
-	case u.launchedPID != 0, len(u.turns) == 0:
-		return 0
-	case u.hasStatus && u.status.State == session.Starting && u.status.Active():
-		return 0
-	case u.hasStatus && u.status.State == session.Failed:
-		return 0
+// liveEntries returns the turns of the latest rounds, followed by what the
+// session is doing if it has no turn in progress.
+func (u *UI) liveEntries() []entry {
+	var es []entry
+	if n := len(u.turns); n > 0 {
+		last := u.turns[n-1].Round
+		for _, t := range u.turns {
+			if t.Round > last-liveRounds {
+				es = append(es, u.turnEntries(t)...)
+			}
+		}
 	}
-	return len(u.turns)
+	if u.starting() {
+		es = append(es, entry{kind: entryNote, text: "Preparing the session. The first run builds the agent image, which takes a few minutes."})
+		es = append(es, u.consoleEntries(30)...)
+	} else if text, bad := u.statusText(); bad {
+		es = append(es, entry{kind: entryNote, text: text, bad: true})
+	}
+	return es
 }
 
-func (u *UI) loadEvents(path string) {
+// consoleEntries returns the engine log, or its last n lines if n > 0.
+func (u *UI) consoleEntries(n int) []entry {
+	log := strings.TrimRight(session.EngineLog(u.folder, 256<<10), "\n")
+	if log == "" {
+		return nil
+	}
+	lines := strings.Split(log, "\n")
+	if n > 0 && len(lines) > n {
+		lines = lines[len(lines)-n:]
+	}
+	return []entry{{kind: entryConsole, text: strings.Join(lines, "\n")}}
+}
+
+// turnEntries returns a turn's heading and events.
+func (u *UI) turnEntries(t session.TurnLog) []entry {
+	es := []entry{{kind: entryTurn, turn: t}}
+	for i, e := range u.events(t.Path) {
+		es = append(es, entry{kind: entryEvent, turn: t, event: e, key: fmt.Sprintf("%s#%d", t.Path, i)})
+	}
+	return es
+}
+
+// events returns the events in a transcript, rereading it only if it
+// changed.
+func (u *UI) events(path string) []transcript.Event {
 	fi, err := os.Stat(path)
 	if err != nil {
-		u.events, u.eventsKey = nil, ""
-		return
+		return nil
 	}
-	key := fmt.Sprintf("%s %d %d", path, fi.Size(), fi.ModTime().UnixNano())
-	if key == u.eventsKey {
-		return
+	key := fmt.Sprintf("%d %d", fi.Size(), fi.ModTime().UnixNano())
+	if c, ok := u.cache[path]; ok && c.key == key {
+		return c.events
 	}
 	events, err := transcript.ReadFile(path)
 	if err != nil {
-		return
+		return u.cache[path].events
 	}
-	u.events, u.eventsKey = events, key
+	u.cache[path] = turnCache{key: key, events: events}
+	return events
+}
+
+// markdown returns src parsed, from the cache if it was parsed before.
+func (u *UI) markdown(src string) []mdBlock {
+	if b, ok := u.mdCache[src]; ok {
+		return b
+	}
+	if len(u.mdCache) > 4000 {
+		clear(u.mdCache)
+	}
+	b := parseMarkdown(src)
+	u.mdCache[src] = b
+	return b
+}
+
+// turnState says how a turn went: done, in progress, or not finished.
+func (u *UI) turnState(t session.TurnLog) (mark string, ok, running bool) {
+	switch {
+	case t.Done:
+		return "✓", true, false
+	case len(u.turns) > 0 && t == u.turns[len(u.turns)-1] && u.active():
+		return "…", true, true
+	}
+	return "✗", false, false
 }
 
 // update handles input that changes the state, before the frame is laid
@@ -410,12 +538,22 @@ func (u *UI) update(gtx layout.Context) {
 	}
 	for i := range u.turnBtns {
 		if u.turnBtns[i].Clicked(gtx) {
-			u.view, u.follow.Value = i, false
+			u.showView(i)
 			u.poll()
 		}
 	}
-	if u.follow.Update(gtx) && u.follow.Value {
-		u.poll()
+	for i := range u.expandBtns {
+		if u.expandBtns[i].Clicked(gtx) && i < len(u.entries) {
+			k := u.entries[i].key
+			u.expanded[k] = !u.expanded[k]
+		}
+	}
+	if u.latestBtn.Clicked(gtx) {
+		u.following = true
+	}
+	if u.markdownOn.Update(gtx) {
+		u.prefs.PlainText = !u.markdownOn.Value
+		u.prefs.save()
 	}
 	if time.Since(u.lastPoll) >= pollInterval-50*time.Millisecond {
 		u.poll()
@@ -431,7 +569,7 @@ func (u *UI) sync(gtx layout.Context) {
 	}
 }
 
-// statusText describes the session's state.
+// statusText describes the session's state, and whether it is a problem.
 func (u *UI) statusText() (string, bool) {
 	if u.folder == "" {
 		return "Choose a project folder to begin.", false
@@ -440,7 +578,7 @@ func (u *UI) statusText() (string, bool) {
 		if session.Alive(u.launchedPID) {
 			return "Starting…", false
 		}
-		return "The session exited before it started; see the engine log.", true
+		return "The session exited before it started; see the console.", true
 	}
 	if !u.hasStatus {
 		return "Not started yet.", false
@@ -448,7 +586,7 @@ func (u *UI) statusText() (string, bool) {
 	st := u.status
 	if st.Active() {
 		if st.State == session.Starting {
-			return "Preparing the folder and the container. The first run builds the agent image, which takes a few minutes.", false
+			return "Preparing the folder and the container…", false
 		}
 		if st.Role == "" {
 			return "Running.", false
@@ -457,7 +595,7 @@ func (u *UI) statusText() (string, bool) {
 	}
 	switch st.State {
 	case session.Starting, session.Running:
-		return "The session stopped unexpectedly; see the engine log.", true
+		return "The session stopped unexpectedly; see the console.", true
 	case session.Stopped:
 		return "Stopped.", false
 	case session.Finished:
@@ -482,4 +620,14 @@ func roleTitle(r backend.Role) string {
 		return s
 	}
 	return strings.ToUpper(s[:1]) + s[1:]
+}
+
+func backendTitle(name string) string {
+	switch name {
+	case "claude":
+		return "Claude Code"
+	case "codex":
+		return "Codex"
+	}
+	return name
 }

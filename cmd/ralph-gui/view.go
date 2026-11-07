@@ -8,12 +8,13 @@ import (
 
 	"gioui.org/font"
 	"gioui.org/layout"
+	"gioui.org/op"
 	"gioui.org/op/clip"
 	"gioui.org/op/paint"
-	"gioui.org/text"
 	"gioui.org/unit"
 	"gioui.org/widget"
 	"gioui.org/widget/material"
+	"gioui.org/x/styledtext"
 
 	"github.com/changkun/ralph/internal/backend"
 	"github.com/changkun/ralph/internal/loop"
@@ -30,76 +31,83 @@ func rgb(c uint32) color.NRGBA {
 	return color.NRGBA{R: uint8(c >> 16), G: uint8(c >> 8), B: uint8(c), A: 0xff}
 }
 
+// Colors, after Slack's.
 var (
-	accent    = rgb(0x4f46e5)
-	ink       = rgb(0x111827)
-	muted     = rgb(0x6b7280)
-	faint     = rgb(0x9ca3af)
-	line      = rgb(0xe5e7eb)
-	panel     = rgb(0xf9fafb)
-	selected  = rgb(0xe0e7ff)
-	danger    = rgb(0xdc2626)
-	success   = rgb(0x16a34a)
-	codeBg    = rgb(0xf3f4f6)
-	thinkInk  = rgb(0x7c3aed)
-	toolInk   = rgb(0x2563eb)
-	cmdInk    = rgb(0x0f766e)
-	changeInk = rgb(0xb45309)
+	white     = rgb(0xffffff)
+	ink       = rgb(0x1d1c1d)
+	muted     = rgb(0x616061)
+	faint     = rgb(0x8a898a)
+	line      = rgb(0xdddddd)
+	panel     = rgb(0xf8f8f8)
+	selected  = rgb(0xe3eefa)
+	accent    = rgb(0x1264a3)
+	go_       = rgb(0x007a5a)
+	danger    = rgb(0xd0164f)
+	codeBg    = rgb(0xf6f6f6)
+	codeLine  = rgb(0xe2e2e2)
+	codeInk   = rgb(0xc01343)
+	quoteBar  = rgb(0xdddddd)
+	changeInk = rgb(0xa0522d)
 )
 
-const mono = "Go Mono"
+var roleColors = map[backend.Role]color.NRGBA{
+	backend.Standalone: rgb(0x2b6cb0),
+	backend.Strategist: rgb(0x6d3fc0),
+	backend.Executor:   rgb(0x1264a3),
+	backend.Evaluator:  rgb(0x007a5a),
+	backend.Archivist:  rgb(0xa0522d),
+}
 
-// The widths of the settings and turn columns.
 const (
-	sidebarWidth = 440
-	turnsWidth   = 220
+	lineScale      = 1.42 // line height, as a multiple of the text size
+	maxOutputLines = 12   // tool output is cut to this many lines until expanded
+	avatarSize     = 32   // dp
+	gutter         = 44   // dp; where a turn's events start, right of its avatar
+	minPaneWidth   = 360  // dp; the narrowest the transcript pane may get
 )
-
-// Long tool output is cut to this many lines.
-const maxOutputLines = 40
 
 func (u *UI) layout(gtx C) D {
 	u.update(gtx)
-	paint.Fill(gtx.Ops, rgb(0xffffff))
+	paint.Fill(gtx.Ops, white)
+	winDp := unit.Dp(float32(gtx.Constraints.Max.X) / gtx.Metric.PxPerDp)
 	dims := layout.Flex{}.Layout(gtx,
-		layout.Rigid(func(gtx C) D { return column(gtx, sidebarWidth, panel, u.layoutSidebar) }),
-		layout.Rigid(vrule),
-		layout.Rigid(func(gtx C) D { return column(gtx, turnsWidth, panel, u.layoutTurns) }),
-		layout.Rigid(vrule),
-		layout.Flexed(1, u.layoutView),
+		layout.Rigid(func(gtx C) D { return column(gtx, u.prefs.SidebarWidth, u.layoutSidebar) }),
+		layout.Rigid(func(gtx C) D {
+			hi := min(720, winDp-u.prefs.TurnsWidth-2*splitterWidth-minPaneWidth)
+			d, ended := u.splitters[0].layout(gtx, 0, &u.prefs.SidebarWidth, 300, hi, panel, panel)
+			if ended {
+				u.prefs.save()
+			}
+			return d
+		}),
+		layout.Rigid(func(gtx C) D { return column(gtx, u.prefs.TurnsWidth, u.layoutTurns) }),
+		layout.Rigid(func(gtx C) D {
+			left := gtx.Dp(u.prefs.SidebarWidth) + gtx.Dp(splitterWidth)
+			hi := min(440, winDp-u.prefs.SidebarWidth-2*splitterWidth-minPaneWidth)
+			d, ended := u.splitters[1].layout(gtx, left, &u.prefs.TurnsWidth, 170, hi, panel, white)
+			if ended {
+				u.prefs.save()
+			}
+			return d
+		}),
+		layout.Flexed(1, u.layoutPane),
 	)
 	u.sync(gtx)
 	return dims
 }
 
-// column lays out w in a fixed-width column filled with bg.
-func column(gtx C, width unit.Dp, bg color.NRGBA, w layout.Widget) D {
+// column lays out w in a fixed-width, full-height column.
+func column(gtx C, width unit.Dp, w layout.Widget) D {
 	px := gtx.Dp(width)
-	gtx.Constraints.Min.X, gtx.Constraints.Max.X = px, px
-	gtx.Constraints.Min.Y = gtx.Constraints.Max.Y
-	return layout.Background{}.Layout(gtx, func(gtx C) D { return fill(gtx, bg) }, w)
-}
-
-func fill(gtx C, c color.NRGBA) D {
-	defer clip.Rect{Max: gtx.Constraints.Min}.Push(gtx.Ops).Pop()
-	paint.ColorOp{Color: c}.Add(gtx.Ops)
-	paint.PaintOp{}.Add(gtx.Ops)
-	return D{Size: gtx.Constraints.Min}
-}
-
-func vrule(gtx C) D {
-	size := image.Pt(gtx.Dp(1), gtx.Constraints.Max.Y)
-	defer clip.Rect{Max: size}.Push(gtx.Ops).Pop()
-	paint.ColorOp{Color: line}.Add(gtx.Ops)
-	paint.PaintOp{}.Add(gtx.Ops)
-	return D{Size: size}
+	gtx.Constraints = layout.Exact(image.Pt(px, gtx.Constraints.Max.Y))
+	paint.FillShape(gtx.Ops, panel, clip.Rect{Max: gtx.Constraints.Max}.Op())
+	w(gtx)
+	return D{Size: gtx.Constraints.Max}
 }
 
 func hrule(gtx C) D {
-	size := image.Pt(gtx.Constraints.Max.X, gtx.Dp(1))
-	defer clip.Rect{Max: size}.Push(gtx.Ops).Pop()
-	paint.ColorOp{Color: line}.Add(gtx.Ops)
-	paint.PaintOp{}.Add(gtx.Ops)
+	size := image.Pt(gtx.Constraints.Max.X, max(1, gtx.Dp(1)))
+	fillRect(gtx, image.Rectangle{Max: size}, line)
 	return D{Size: size}
 }
 
@@ -107,39 +115,86 @@ func space(dp unit.Dp) layout.Widget {
 	return func(gtx C) D { return layout.Spacer{Height: dp, Width: dp}.Layout(gtx) }
 }
 
-func (u *UI) label(size unit.Sp, c color.NRGBA, txt string) material.LabelStyle {
+// leftBar lays out w with a colored bar down its left side.
+func leftBar(gtx C, c color.NRGBA, w layout.Widget) D {
+	m := op.Record(gtx.Ops)
+	dims := layout.Inset{Left: 13}.Layout(gtx, w)
+	call := m.Stop()
+	fillRect(gtx, image.Rect(0, 0, gtx.Dp(3), dims.Size.Y), c)
+	call.Add(gtx.Ops)
+	return dims
+}
+
+// boxed lays out w padded, on bg, inside a rounded border.
+func boxed(gtx C, bg, border color.NRGBA, pad unit.Dp, w layout.Widget) D {
+	return widget.Border{Color: border, CornerRadius: 6, Width: 1}.Layout(gtx, func(gtx C) D {
+		return layout.Background{}.Layout(gtx,
+			func(gtx C) D {
+				r := gtx.Dp(6)
+				defer clip.UniformRRect(image.Rectangle{Max: gtx.Constraints.Min}, r).Push(gtx.Ops).Pop()
+				paint.Fill(gtx.Ops, bg)
+				return D{Size: gtx.Constraints.Min}
+			},
+			func(gtx C) D { return layout.UniformInset(pad).Layout(gtx, w) })
+	})
+}
+
+// text returns a label in Lato.
+func (u *UI) text(size unit.Sp, c color.NRGBA, txt string) material.LabelStyle {
 	l := material.Label(u.th, size, txt)
 	l.Color = c
+	l.LineHeightScale = lineScale
+	return l
+}
+
+func (u *UI) bold(size unit.Sp, c color.NRGBA, txt string) material.LabelStyle {
+	l := u.text(size, c, txt)
+	l.Font.Weight = font.Black
+	return l
+}
+
+func (u *UI) code(size unit.Sp, c color.NRGBA, txt string) material.LabelStyle {
+	l := u.text(size, c, txt)
+	l.Font.Typeface = mono
+	l.LineHeightScale = 1.3
+	return l
+}
+
+// symbol returns a label for a symbol such as ✓, which Lato lacks.
+func (u *UI) symbol(size unit.Sp, c color.NRGBA, txt string) material.LabelStyle {
+	l := u.text(size, c, txt)
+	l.Font.Typeface = mono
 	return l
 }
 
 func (u *UI) heading(txt string) layout.Widget {
 	return func(gtx C) D {
-		return layout.Inset{Top: 18, Bottom: 6}.Layout(gtx, func(gtx C) D {
-			l := u.label(11, muted, strings.ToUpper(txt))
-			l.Font.Weight = font.Bold
-			return l.Layout(gtx)
-		})
+		return layout.Inset{Top: 22, Bottom: 8}.Layout(gtx, u.bold(13, ink, txt).Layout)
 	}
 }
 
-// box draws an outlined, padded box around an editor.
-func (u *UI) box(gtx C, ed *widget.Editor, hint string, mono bool) D {
-	return widget.Border{Color: line, CornerRadius: 4, Width: 1}.Layout(gtx, func(gtx C) D {
-		return layout.Background{}.Layout(gtx,
-			func(gtx C) D { return fill(gtx, rgb(0xffffff)) },
-			func(gtx C) D {
-				return layout.UniformInset(6).Layout(gtx, func(gtx C) D {
-					gtx.Constraints.Min.X = gtx.Constraints.Max.X
-					e := material.Editor(u.th, ed, hint)
-					if mono {
-						e.Font.Typeface = font.Typeface("Go Mono")
-						e.TextSize = 12
-					}
-					return e.Layout(gtx)
-				})
-			})
+// editor draws an editor in an outlined box.
+func (u *UI) editor(gtx C, ed *widget.Editor, hint string, code bool) D {
+	return boxed(gtx, white, line, 8, func(gtx C) D {
+		gtx.Constraints.Min.X = gtx.Constraints.Max.X
+		e := material.Editor(u.th, ed, hint)
+		e.HintColor = faint
+		e.LineHeightScale = 1.3
+		if code {
+			e.Font.Typeface = mono
+			e.TextSize = 13
+		}
+		return e.Layout(gtx)
 	})
+}
+
+func (u *UI) button(gtx C, btn *widget.Clickable, txt string, bg color.NRGBA) D {
+	b := material.Button(u.th, btn, txt)
+	b.Background = bg
+	b.Font.Weight = font.Bold
+	b.CornerRadius = 6
+	b.Inset = layout.Inset{Top: 9, Bottom: 9, Left: 18, Right: 18}
+	return b.Layout(gtx)
 }
 
 // enabled lays out w, disabled if the settings cannot change now.
@@ -154,26 +209,20 @@ func (u *UI) enabled(w layout.Widget) layout.Widget {
 
 func (u *UI) layoutSidebar(gtx C) D {
 	items := []layout.Widget{
-		func(gtx C) D {
-			l := u.label(22, ink, "Ralph")
-			l.Font.Weight = font.Bold
-			return l.Layout(gtx)
-		},
-		func(gtx C) D {
-			return u.label(12, muted, "Runs coding agents in rounds on a project, committing it after each round.").Layout(gtx)
-		},
+		u.bold(24, ink, "Ralph").Layout,
+		u.text(14, muted, "Runs coding agents in rounds on a project, committing it after each round.").Layout,
 		u.heading("Project folder"),
 		// Another folder can be opened while a session runs; the session
 		// keeps running, and reopening its folder follows it again.
 		func(gtx C) D {
 			return layout.Flex{Alignment: layout.Middle}.Layout(gtx,
-				layout.Flexed(1, func(gtx C) D { return u.box(gtx, &u.folderEd, "Path, or choose a folder", false) }),
+				layout.Flexed(1, func(gtx C) D { return u.editor(gtx, &u.folderEd, "Path, or choose a folder", false) }),
 				layout.Rigid(space(8)),
-				layout.Rigid(material.Button(u.th, &u.chooseBtn, "Choose…").Layout),
+				layout.Rigid(func(gtx C) D { return u.button(gtx, &u.chooseBtn, "Choose…", accent) }),
 			)
 		},
 		u.layoutControls,
-		u.heading("Runtime"),
+		u.heading("Where agents run"),
 		u.enabled(func(gtx C) D {
 			var children []layout.FlexChild
 			for _, rt := range session.Runtimes {
@@ -198,29 +247,27 @@ func (u *UI) layoutSidebar(gtx C) D {
 		u.enabled(func(gtx C) D {
 			return layout.Flex{Alignment: layout.Middle}.Layout(gtx,
 				layout.Rigid(func(gtx C) D {
-					gtx.Constraints.Max.X = gtx.Dp(90)
-					return u.box(gtx, &u.rounds, "no limit", false)
+					gtx.Constraints.Max.X = gtx.Dp(96)
+					return u.editor(gtx, &u.rounds, "no limit", false)
 				}),
-				layout.Rigid(space(8)),
-				layout.Rigid(u.label(12, muted, "Stop after this round. Empty means no limit.").Layout),
+				layout.Rigid(space(10)),
+				layout.Flexed(1, u.text(14, muted, "Stop after this round. Empty means no limit.").Layout),
 			)
 		}),
 	}
-	pattern := loop.Pattern(u.pattern.Value)
-	for _, role := range pattern.Roles() {
+	for _, role := range loop.Pattern(u.pattern.Value).Roles() {
 		items = append(items, u.heading(roleTitle(role)), u.enabled(func(gtx C) D { return u.layoutRole(gtx, role) }))
 	}
-	items = append(items, space(24))
-	return material.List(u.th, &u.sidebar).Layout(gtx, len(items), func(gtx C, i int) D {
-		return layout.Inset{Left: 20, Right: 20, Top: firstTop(i)}.Layout(gtx, items[i])
+	items = append(items, space(40))
+	return u.sidebarElastic.layout(gtx, &u.sidebar.List, func(gtx C) D {
+		return material.List(u.th, &u.sidebar).Layout(gtx, len(items), func(gtx C, i int) D {
+			top := unit.Dp(0)
+			if i == 0 {
+				top = 22
+			}
+			return layout.Inset{Left: 22, Right: 22, Top: top}.Layout(gtx, items[i])
+		})
 	})
-}
-
-func firstTop(i int) unit.Dp {
-	if i == 0 {
-		return 20
-	}
-	return 0
 }
 
 // layoutControls lays out the Start and Stop buttons, the session's state,
@@ -228,43 +275,40 @@ func firstTop(i int) unit.Dp {
 func (u *UI) layoutControls(gtx C) D {
 	active := u.active()
 	status, bad := u.statusText()
-	statusColor := muted
+	statusColor := ink
 	if bad {
 		statusColor = danger
 	}
 	children := []layout.FlexChild{
-		layout.Rigid(space(16)),
+		layout.Rigid(space(18)),
 		layout.Rigid(func(gtx C) D {
 			return layout.Flex{Alignment: layout.Middle}.Layout(gtx,
 				layout.Rigid(func(gtx C) D {
 					if active || u.folder == "" {
 						gtx = gtx.Disabled()
 					}
-					b := material.Button(u.th, &u.startBtn, "Start")
-					return b.Layout(gtx)
+					return u.button(gtx, &u.startBtn, "Start", go_)
 				}),
 				layout.Rigid(space(8)),
 				layout.Rigid(func(gtx C) D {
 					if !active {
 						gtx = gtx.Disabled()
 					}
-					b := material.Button(u.th, &u.stopBtn, "Stop")
-					b.Background = danger
-					return b.Layout(gtx)
+					return u.button(gtx, &u.stopBtn, "Stop", danger)
 				}),
 			)
 		}),
-		layout.Rigid(space(8)),
-		layout.Rigid(u.label(13, statusColor, status).Layout),
+		layout.Rigid(space(10)),
+		layout.Rigid(u.text(15, statusColor, status).Layout),
 	}
 	for _, problem := range []string{u.message, errText(u.invalid)} {
 		if problem != "" {
-			children = append(children, layout.Rigid(space(6)), layout.Rigid(u.label(13, danger, problem).Layout))
+			children = append(children, layout.Rigid(space(6)), layout.Rigid(u.text(14, danger, problem).Layout))
 		}
 	}
 	if active {
-		children = append(children, layout.Rigid(space(6)),
-			layout.Rigid(u.label(12, faint, "Settings can be changed once the session stops.").Layout))
+		children = append(children, layout.Rigid(space(4)),
+			layout.Rigid(u.text(14, muted, "Settings can be changed once the session stops.").Layout))
 	}
 	return layout.Flex{Axis: layout.Vertical}.Layout(gtx, children...)
 }
@@ -278,20 +322,26 @@ func errText(err error) string {
 
 func (u *UI) layoutLogins(gtx C) D {
 	if u.runtime.Value == session.Host {
-		return layout.Inset{Top: 4}.Layout(gtx,
-			u.label(12, muted, "Agents run directly on this machine, with the CLIs' own logins and permissions.").Layout)
+		return layout.Inset{Top: 6}.Layout(gtx,
+			u.text(14, muted, "Agents run directly on this machine, with the CLIs' own logins and permissions.").Layout)
 	}
-	var children []layout.FlexChild
-	children = append(children, layout.Rigid(
-		u.label(12, muted, "Agents run in a new container that sees only the project folder.").Layout))
+	children := []layout.FlexChild{layout.Rigid(
+		u.text(14, muted, "Agents run in a new container that sees only the project folder.").Layout)}
 	for _, l := range u.logins {
-		txt, c := fmt.Sprintf("%s: logs in with %s", l.Backend, strings.Join(l.Found, ", ")), success
+		dot, txt := go_, fmt.Sprintf("%s logs in with %s.", backendTitle(l.Backend), strings.Join(l.Found, ", "))
 		if len(l.Found) == 0 {
-			txt, c = fmt.Sprintf("%s: no login found; %s", l.Backend, l.Help), danger
+			dot, txt = danger, fmt.Sprintf("%s has no login: %s.", backendTitle(l.Backend), l.Help)
 		}
-		children = append(children, layout.Rigid(space(4)), layout.Rigid(u.label(12, c, txt).Layout))
+		children = append(children, layout.Rigid(space(6)), layout.Rigid(func(gtx C) D {
+			return layout.Flex{}.Layout(gtx,
+				layout.Rigid(func(gtx C) D {
+					return layout.Inset{Top: 1, Right: 8}.Layout(gtx, u.symbol(12, dot, "●").Layout)
+				}),
+				layout.Flexed(1, u.text(14, ink, txt).Layout),
+			)
+		}))
 	}
-	return layout.Inset{Top: 4}.Layout(gtx, func(gtx C) D {
+	return layout.Inset{Top: 6}.Layout(gtx, func(gtx C) D {
 		return layout.Flex{Axis: layout.Vertical}.Layout(gtx, children...)
 	})
 }
@@ -299,35 +349,35 @@ func (u *UI) layoutLogins(gtx C) D {
 func (u *UI) layoutRole(gtx C, role backend.Role) D {
 	f := u.roles[role]
 	children := []layout.FlexChild{
-		layout.Rigid(u.label(12, muted, roleInfo[role]).Layout),
+		layout.Rigid(u.text(14, muted, roleInfo[role]).Layout),
 		layout.Rigid(space(6)),
 		layout.Rigid(func(gtx C) D {
-			var radios []layout.FlexChild
+			var row []layout.FlexChild
 			for _, name := range backend.Names {
-				radios = append(radios, layout.Rigid(material.RadioButton(u.th, &f.backend, name, name).Layout))
+				row = append(row, layout.Rigid(material.RadioButton(u.th, &f.backend, name, name).Layout))
 			}
-			radios = append(radios, layout.Rigid(space(8)), layout.Flexed(1, func(gtx C) D {
-				return u.box(gtx, &f.model, "model (CLI default)", false)
+			row = append(row, layout.Rigid(space(8)), layout.Flexed(1, func(gtx C) D {
+				return u.editor(gtx, &f.model, "model (CLI default)", false)
 			}))
-			return layout.Flex{Alignment: layout.Middle}.Layout(gtx, radios...)
+			return layout.Flex{Alignment: layout.Middle}.Layout(gtx, row...)
 		}),
 		layout.Rigid(material.CheckBox(u.th, &f.edit, "Edit prompts").Layout),
 	}
 	if f.edit.Value {
 		children = append(children,
-			layout.Rigid(u.label(12, muted, "System prompt").Layout),
+			layout.Rigid(u.text(14, muted, "System prompt").Layout),
 			layout.Rigid(space(4)),
-			layout.Rigid(func(gtx C) D { return u.box(gtx, &f.system, "none", true) }),
-			layout.Rigid(space(8)),
-			layout.Rigid(u.label(12, muted, "Prompt").Layout),
+			layout.Rigid(func(gtx C) D { return u.editor(gtx, &f.system, "none", true) }),
+			layout.Rigid(space(10)),
+			layout.Rigid(u.text(14, muted, "Prompt").Layout),
 			layout.Rigid(space(4)),
-			layout.Rigid(func(gtx C) D { return u.box(gtx, &f.prompt, "", true) }),
-			layout.Rigid(space(8)),
+			layout.Rigid(func(gtx C) D { return u.editor(gtx, &f.prompt, "", true) }),
+			layout.Rigid(space(10)),
 			layout.Rigid(func(gtx C) D {
 				b := material.Button(u.th, &f.reset, "Reset to the built-in prompts")
-				b.Background, b.Color = rgb(0xffffff), accent
-				b.TextSize = 12
-				return widget.Border{Color: line, CornerRadius: 4, Width: 1}.Layout(gtx, b.Layout)
+				b.Background, b.Color = white, accent
+				b.TextSize, b.CornerRadius = 14, 6
+				return widget.Border{Color: line, CornerRadius: 6, Width: 1}.Layout(gtx, b.Layout)
 			}),
 		)
 	}
@@ -335,40 +385,48 @@ func (u *UI) layoutRole(gtx C, role backend.Role) D {
 }
 
 func (u *UI) layoutTurns(gtx C) D {
-	return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
-		layout.Rigid(func(gtx C) D {
-			return layout.Inset{Left: 12, Right: 12, Top: 16, Bottom: 8}.Layout(gtx,
-				material.CheckBox(u.th, &u.follow, "Follow the session").Layout)
-		}),
-		layout.Rigid(hrule),
-		layout.Flexed(1, func(gtx C) D {
-			if u.folder == "" {
-				return D{}
+	if u.folder == "" {
+		return D{Size: gtx.Constraints.Max}
+	}
+	return u.turnsElastic.layout(gtx, &u.turnList.List, func(gtx C) D {
+		n := len(u.turns) + firstTurnView + 1 // and space at the end
+		return material.List(u.th, &u.turnList).Layout(gtx, n, func(gtx C, i int) D {
+			switch {
+			case i == viewLive:
+				return layout.Inset{Top: 14}.Layout(gtx, func(gtx C) D {
+					return u.layoutTurnItem(gtx, i, "Live", "", ink, accent)
+				})
+			case i == viewConsole:
+				return u.layoutTurnItem(gtx, i, "Console", "", ink, faint)
+			case i == n-1:
+				return layout.Spacer{Height: 40}.Layout(gtx)
 			}
-			return material.List(u.th, &u.turnList).Layout(gtx, len(u.turns)+1, u.layoutTurnItem)
-		}),
-	)
+			t := u.turns[i-firstTurnView]
+			mark, ok, running := u.turnState(t)
+			markColor := go_
+			switch {
+			case running:
+				markColor = accent
+			case !ok:
+				markColor = danger
+			}
+			item := func(gtx C) D { return u.layoutTurnItem(gtx, i, roleTitle(t.Role), mark, markColor, roleColors[t.Role]) }
+			if i > firstTurnView && u.turns[i-firstTurnView-1].Round == t.Round {
+				return item(gtx)
+			}
+			return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
+				layout.Rigid(func(gtx C) D {
+					return layout.Inset{Left: 18, Top: 16, Bottom: 4}.Layout(gtx,
+						u.bold(13, muted, fmt.Sprintf("Round %d", t.Round)).Layout)
+				}),
+				layout.Rigid(item),
+			)
+		})
+	})
 }
 
-func (u *UI) layoutTurnItem(gtx C, i int) D {
-	title, mark, markColor := "Engine log", "", muted
-	var header string
-	if i > 0 {
-		t := u.turns[i-1]
-		title = roleTitle(t.Role)
-		switch {
-		case t.Done:
-			mark, markColor = "✓", success
-		case i == len(u.turns) && u.active():
-			mark, markColor = "…", accent
-		default:
-			mark, markColor = "✗", danger
-		}
-		if i == 1 || u.turns[i-2].Round != t.Round {
-			header = fmt.Sprintf("Round %d", t.Round)
-		}
-	}
-	item := func(gtx C) D {
+func (u *UI) layoutTurnItem(gtx C, i int, title, mark string, markColor, dot color.NRGBA) D {
+	return layout.Inset{Left: 8, Right: 8}.Layout(gtx, func(gtx C) D {
 		return material.Clickable(gtx, &u.turnBtns[i], func(gtx C) D {
 			gtx.Constraints.Min.X = gtx.Constraints.Max.X
 			bg := color.NRGBA{}
@@ -376,178 +434,416 @@ func (u *UI) layoutTurnItem(gtx C, i int) D {
 				bg = selected
 			}
 			return layout.Background{}.Layout(gtx,
-				func(gtx C) D { return fill(gtx, bg) },
 				func(gtx C) D {
-					return layout.Inset{Left: 20, Right: 12, Top: 6, Bottom: 6}.Layout(gtx, func(gtx C) D {
+					defer clip.UniformRRect(image.Rectangle{Max: gtx.Constraints.Min}, gtx.Dp(6)).Push(gtx.Ops).Pop()
+					paint.Fill(gtx.Ops, bg)
+					return D{Size: gtx.Constraints.Min}
+				},
+				func(gtx C) D {
+					return layout.Inset{Left: 10, Right: 10, Top: 5, Bottom: 5}.Layout(gtx, func(gtx C) D {
 						return layout.Flex{Alignment: layout.Middle}.Layout(gtx,
-							layout.Flexed(1, u.label(13, ink, title).Layout),
-							layout.Rigid(u.label(13, markColor, mark).Layout),
+							layout.Rigid(func(gtx C) D {
+								return layout.Inset{Right: 8}.Layout(gtx, u.symbol(10, dot, "●").Layout)
+							}),
+							layout.Flexed(1, u.text(15, ink, title).Layout),
+							layout.Rigid(u.symbol(13, markColor, mark).Layout),
 						)
 					})
 				})
 		})
-	}
-	if header == "" {
-		return item(gtx)
-	}
-	return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
-		layout.Rigid(func(gtx C) D {
-			return layout.Inset{Left: 12, Top: 12, Bottom: 2}.Layout(gtx, func(gtx C) D {
-				l := u.label(11, muted, strings.ToUpper(header))
-				l.Font.Weight = font.Bold
-				return l.Layout(gtx)
-			})
-		}),
-		layout.Rigid(item),
-	)
+	})
 }
 
-func (u *UI) layoutView(gtx C) D {
-	title := "Engine log"
-	if u.view > 0 && u.view <= len(u.turns) {
-		t := u.turns[u.view-1]
-		title = fmt.Sprintf("Round %d · %s", t.Round, roleTitle(t.Role))
+func (u *UI) layoutPane(gtx C) D {
+	title, subtitle := "Live", fmt.Sprintf("The latest %d rounds, as they happen", liveRounds)
+	switch {
+	case u.view == viewConsole:
+		title, subtitle = "Console", "What the session printed"
+	case u.view >= firstTurnView && u.view-firstTurnView < len(u.turns):
+		t := u.turns[u.view-firstTurnView]
+		title = roleTitle(t.Role)
+		_, ok, running := u.turnState(t)
+		switch {
+		case running:
+			subtitle = fmt.Sprintf("Round %d · in progress", t.Round)
+		case ok:
+			subtitle = fmt.Sprintf("Round %d · done", t.Round)
+		default:
+			subtitle = fmt.Sprintf("Round %d · did not finish", t.Round)
+		}
 	}
 	return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
 		layout.Rigid(func(gtx C) D {
-			return layout.Inset{Left: 24, Right: 24, Top: 16, Bottom: 12}.Layout(gtx, func(gtx C) D {
-				l := u.label(18, ink, title)
-				l.Font.Weight = font.Bold
-				return l.Layout(gtx)
+			return layout.Inset{Left: 28, Right: 24, Top: 16, Bottom: 14}.Layout(gtx, func(gtx C) D {
+				return layout.Flex{Alignment: layout.Middle}.Layout(gtx,
+					layout.Flexed(1, func(gtx C) D {
+						return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
+							layout.Rigid(u.bold(18, ink, title).Layout),
+							layout.Rigid(u.text(13, muted, subtitle).Layout),
+						)
+					}),
+					layout.Rigid(func(gtx C) D {
+						if u.view == viewConsole {
+							return D{}
+						}
+						return material.CheckBox(u.th, &u.markdownOn, "Format Markdown").Layout(gtx)
+					}),
+				)
 			})
 		}),
 		layout.Rigid(hrule),
-		layout.Flexed(1, func(gtx C) D {
-			// Keep following the end of the view once it no longer fits,
-			// but start short content at the top.
-			u.eventList.ScrollToEnd = u.eventList.Position.Length > gtx.Constraints.Max.Y
-			if u.view != u.shownView {
-				u.shownView, u.eventList.Position = u.view, layout.Position{}
-			}
-			switch {
-			case u.folder == "":
-				return u.placeholder(gtx, "Choose a project folder. Ralph makes it a git repository if it is not one, and keeps its logs in .ralph.")
-			case u.view == 0:
-				return u.layoutLog(gtx)
-			case len(u.events) == 0:
-				return u.placeholder(gtx, "Waiting for the agent…")
-			}
-			return material.List(u.th, &u.eventList).Layout(gtx, len(u.events), func(gtx C, i int) D {
-				return layout.Inset{Left: 24, Right: 24, Top: 10, Bottom: 6}.Layout(gtx, func(gtx C) D {
-					return u.layoutEvent(gtx, u.events[i])
+		layout.Flexed(1, u.layoutEntries),
+	)
+}
+
+func (u *UI) layoutEntries(gtx C) D {
+	switch {
+	case u.folder == "":
+		return u.placeholder(gtx, "Choose a project folder. Ralph makes it a git repository if it is not one, and keeps its logs in .ralph.")
+	case len(u.entries) == 0 && u.view == viewConsole:
+		return u.placeholder(gtx, "No session has run in this folder yet.")
+	case len(u.entries) == 0:
+		return u.placeholder(gtx, "Nothing yet. Press Start to run a session.")
+	}
+	// The live view and the console stay at their end, until the user
+	// scrolls up, once they no longer fit; what fits starts at the top.
+	// The list reports whether it is before its end after each layout.
+	l := &u.entryList
+	follow := u.view == viewLive || u.view == viewConsole
+	l.ScrollToEnd = follow && l.Position.Length > gtx.Constraints.Max.Y
+	if l.ScrollToEnd && u.following {
+		l.Position.BeforeEnd = false
+	}
+	return layout.Stack{Alignment: layout.SE}.Layout(gtx,
+		layout.Expanded(func(gtx C) D {
+			dims := u.entryElastic.layout(gtx, &l.List, func(gtx C) D {
+				return material.List(u.th, l).Layout(gtx, len(u.entries)+1, func(gtx C, i int) D {
+					if i == len(u.entries) {
+						return layout.Spacer{Height: 48}.Layout(gtx)
+					}
+					gtx.Constraints.Min.X = gtx.Constraints.Max.X // so the scroll bar is at the pane's edge
+					return layout.Inset{Left: 28, Right: 28}.Layout(gtx, func(gtx C) D { return u.layoutEntry(gtx, i) })
 				})
+			})
+			if l.ScrollToEnd {
+				u.following = !l.Position.BeforeEnd
+			}
+			return dims
+		}),
+		layout.Stacked(func(gtx C) D {
+			if !l.ScrollToEnd || u.following {
+				return D{}
+			}
+			return layout.UniformInset(20).Layout(gtx, func(gtx C) D {
+				return u.button(gtx, &u.latestBtn, "Jump to latest", accent)
 			})
 		}),
 	)
 }
 
 func (u *UI) placeholder(gtx C, txt string) D {
-	return layout.UniformInset(24).Layout(gtx, u.label(14, muted, txt).Layout)
+	return layout.Inset{Left: 28, Right: 28, Top: 24}.Layout(gtx, u.text(15, muted, txt).Layout)
 }
 
-func (u *UI) layoutLog(gtx C) D {
-	if len(u.logLines) == 0 || len(u.logLines) == 1 && u.logLines[0] == "" {
-		return u.placeholder(gtx, "No session has run in this folder yet.")
-	}
-	return material.List(u.th, &u.eventList).Layout(gtx, len(u.logLines), func(gtx C, i int) D {
-		return layout.Inset{Left: 24, Right: 24, Top: firstTop(i) / 2}.Layout(gtx, func(gtx C) D {
-			l := u.label(12, ink, u.logLines[i])
-			l.Font.Typeface = mono
-			return l.Layout(gtx)
-		})
-	})
-}
-
-// eventStyles gives each kind of event a tag and a color.
-var eventStyles = map[transcript.Kind]struct {
-	tag   string
-	color color.NRGBA
-}{
-	transcript.Info:       {"info", muted},
-	transcript.Message:    {"agent", ink},
-	transcript.Thinking:   {"thinking", thinkInk},
-	transcript.ToolCall:   {"tool", toolInk},
-	transcript.ToolResult: {"output", muted},
-	transcript.Command:    {"command", cmdInk},
-	transcript.FileChange: {"edit", changeInk},
-	transcript.Error:      {"error", danger},
-	transcript.Result:     {"done", success},
-}
-
-func (u *UI) layoutEvent(gtx C, e transcript.Event) D {
-	style := eventStyles[e.Kind]
-	tag, tagColor := style.tag, style.color
-	if e.Failed {
-		tagColor = danger
-		if e.Kind == transcript.Result {
-			tag = "failed"
+func (u *UI) layoutEntry(gtx C, i int) D {
+	e := u.entries[i]
+	switch e.kind {
+	case entryTurn:
+		top := unit.Dp(22)
+		if i == 0 {
+			top = 18
 		}
+		return layout.Inset{Top: top, Bottom: 2}.Layout(gtx, func(gtx C) D { return u.layoutTurnHeading(gtx, e.turn) })
+	case entryNote:
+		c := accent
+		if e.bad {
+			c = danger
+		}
+		return layout.Inset{Top: 18, Bottom: 6}.Layout(gtx, func(gtx C) D {
+			return leftBar(gtx, c, u.text(15, ink, e.text).Layout)
+		})
+	case entryConsole:
+		return layout.Inset{Top: 12}.Layout(gtx, func(gtx C) D {
+			return boxed(gtx, codeBg, codeLine, 12, u.code(13, ink, e.text).Layout)
+		})
 	}
-	var children []layout.FlexChild
-	children = append(children, layout.Rigid(func(gtx C) D {
-		return layout.Flex{Alignment: layout.Baseline}.Layout(gtx,
+	return layout.Inset{Left: gutter, Top: 5, Bottom: 5}.Layout(gtx, func(gtx C) D { return u.layoutEvent(gtx, i, e) })
+}
+
+// layoutTurnHeading lays out a turn's heading, as Slack shows who wrote a
+// message: an avatar, the role's name, and the round.
+func (u *UI) layoutTurnHeading(gtx C, t session.TurnLog) D {
+	mark, ok, running := u.turnState(t)
+	markColor, state := go_, "done"
+	switch {
+	case running:
+		markColor, state = accent, "in progress"
+	case !ok:
+		markColor, state = danger, "did not finish"
+	}
+	return layout.Flex{Alignment: layout.Middle}.Layout(gtx,
+		layout.Rigid(func(gtx C) D {
+			size := gtx.Dp(avatarSize)
+			gtx.Constraints = layout.Exact(image.Pt(size, size))
+			defer clip.UniformRRect(image.Rectangle{Max: image.Pt(size, size)}, gtx.Dp(7)).Push(gtx.Ops).Pop()
+			paint.Fill(gtx.Ops, roleColors[t.Role])
+			return layout.Center.Layout(gtx, u.bold(16, white, strings.ToUpper(string(t.Role)[:1])).Layout)
+		}),
+		layout.Rigid(space(12)),
+		layout.Rigid(u.bold(15, ink, roleTitle(t.Role)).Layout),
+		layout.Rigid(space(8)),
+		layout.Rigid(u.text(13, muted, fmt.Sprintf("Round %d · %s", t.Round, state)).Layout),
+		layout.Rigid(space(6)),
+		layout.Rigid(u.symbol(12, markColor, mark).Layout),
+	)
+}
+
+func (u *UI) layoutEvent(gtx C, i int, e entry) D {
+	ev := e.event
+	switch ev.Kind {
+	case transcript.Info:
+		return u.text(13, muted, ev.Title).Layout(gtx)
+	case transcript.Message:
+		return u.layoutProse(gtx, ev.Text, ink, false)
+	case transcript.Thinking:
+		return leftBar(gtx, quoteBar, func(gtx C) D { return u.layoutProse(gtx, ev.Text, muted, true) })
+	case transcript.Error:
+		return leftBar(gtx, danger, u.text(14, danger, strings.TrimSpace(ev.Text)).Layout)
+	case transcript.Result:
+		mark, c := "✓", go_
+		if ev.Failed {
+			mark, c = "✗", danger
+		}
+		children := []layout.FlexChild{layout.Rigid(func(gtx C) D {
+			return layout.Flex{}.Layout(gtx,
+				layout.Rigid(func(gtx C) D {
+					gtx.Constraints.Min.X = gtx.Dp(18)
+					return u.symbol(12, c, mark).Layout(gtx)
+				}),
+				layout.Flexed(1, u.text(13, muted, ev.Title).Layout),
+			)
+		})}
+		if ev.Failed && strings.TrimSpace(ev.Text) != "" {
+			children = append(children, layout.Rigid(u.text(14, danger, strings.TrimSpace(ev.Text)).Layout))
+		}
+		return layout.Flex{Axis: layout.Vertical}.Layout(gtx, children...)
+	case transcript.ToolResult:
+		return u.layoutOutput(gtx, i, e.key, ev.Text, ev.Failed)
+	}
+
+	// Tool calls, commands, and file changes: a line saying what the agent
+	// did, then its output or input.
+	glyph, c := "▸", accent
+	switch ev.Kind {
+	case transcript.Command:
+		glyph, c = "$", go_
+	case transcript.FileChange:
+		glyph, c = "✎", changeInk
+	}
+	if ev.Failed {
+		c = danger
+	}
+	children := []layout.FlexChild{layout.Rigid(func(gtx C) D {
+		return layout.Flex{}.Layout(gtx,
 			layout.Rigid(func(gtx C) D {
-				gtx.Constraints.Min.X = gtx.Dp(76)
-				l := u.label(11, tagColor, strings.ToUpper(tag))
-				l.Font.Weight = font.Bold
-				return l.Layout(gtx)
+				gtx.Constraints.Min.X = gtx.Dp(18)
+				return u.symbol(13, c, glyph).Layout(gtx)
 			}),
 			layout.Flexed(1, func(gtx C) D {
-				if e.Title == "" {
-					return D{}
-				}
-				l := u.label(14, ink, e.Title)
-				if e.Kind == transcript.Command || e.Kind == transcript.ToolCall {
-					l.Font.Typeface = mono
-					l.TextSize = 13
-				}
+				l := u.code(13, ink, ev.Title)
 				l.MaxLines = 3
 				return l.Layout(gtx)
 			}),
 		)
-	}))
-	body := strings.TrimSpace(e.Text)
-	if e.Kind == transcript.Result && !e.Failed {
-		body = "" // the final answer, which the last message already shows
-	}
-	if body != "" {
+	})}
+	if body := strings.TrimSpace(ev.Text); body != "" {
 		children = append(children, layout.Rigid(space(4)), layout.Rigid(func(gtx C) D {
-			return layout.Inset{Left: 76}.Layout(gtx, func(gtx C) D { return u.layoutBody(gtx, e.Kind, body) })
+			return layout.Inset{Left: 18}.Layout(gtx, func(gtx C) D {
+				if ev.Kind == transcript.ToolCall {
+					return u.layoutToolInput(gtx, i, e.key, body)
+				}
+				return u.layoutOutput(gtx, i, e.key, body, ev.Failed)
+			})
 		}))
 	}
 	return layout.Flex{Axis: layout.Vertical}.Layout(gtx, children...)
 }
 
-func (u *UI) layoutBody(gtx C, kind transcript.Kind, body string) D {
-	switch kind {
-	case transcript.Message:
-		return u.label(14, ink, body).Layout(gtx)
-	case transcript.Thinking:
-		l := u.label(13, muted, body)
-		l.Font.Style = font.Italic
-		return l.Layout(gtx)
-	case transcript.Error:
-		return u.label(13, danger, body).Layout(gtx)
+// layoutToolInput shows a tool call's input, which mostly repeats its
+// title, only on request.
+func (u *UI) layoutToolInput(gtx C, i int, key, body string) D {
+	if !u.expanded[key] {
+		return u.link(gtx, i, "Show input")
 	}
-	body = clipLines(body, maxOutputLines)
-	return layout.Background{}.Layout(gtx,
-		func(gtx C) D { return fill(gtx, codeBg) },
-		func(gtx C) D {
-			return layout.UniformInset(8).Layout(gtx, func(gtx C) D {
-				gtx.Constraints.Min.X = gtx.Constraints.Max.X
-				l := u.label(12, ink, body)
-				l.Font.Typeface = mono
-				l.WrapPolicy = text.WrapGraphemes
-				return l.Layout(gtx)
-			})
-		})
+	return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
+		layout.Rigid(func(gtx C) D { return boxed(gtx, codeBg, codeLine, 10, u.code(13, ink, body).Layout) }),
+		layout.Rigid(func(gtx C) D { return u.link(gtx, i, "Hide input") }),
+	)
 }
 
-// clipLines cuts s to its first max lines.
-func clipLines(s string, max int) string {
-	lines := strings.Split(s, "\n")
-	if len(lines) <= max {
-		return s
+// layoutOutput shows a tool's output, cut to its first lines until it is
+// expanded.
+func (u *UI) layoutOutput(gtx C, i int, key, body string, failed bool) D {
+	body = strings.TrimRight(body, "\n")
+	short, more := firstLines(body, maxOutputLines)
+	if !u.expanded[key] {
+		body = short
 	}
-	return strings.Join(lines[:max], "\n") + fmt.Sprintf("\n… %d more lines", len(lines)-max)
+	border := codeLine
+	if failed {
+		border = danger
+	}
+	children := []layout.FlexChild{layout.Rigid(func(gtx C) D {
+		gtx.Constraints.Min.X = gtx.Constraints.Max.X
+		return boxed(gtx, codeBg, border, 10, u.code(13, ink, body).Layout)
+	})}
+	if more > 0 {
+		label := fmt.Sprintf("Show %d more lines", more)
+		if u.expanded[key] {
+			label = "Show less"
+		}
+		children = append(children, layout.Rigid(func(gtx C) D { return u.link(gtx, i, label) }))
+	}
+	return layout.Flex{Axis: layout.Vertical}.Layout(gtx, children...)
+}
+
+// firstLines returns the first n lines of s, and how many lines follow.
+func firstLines(s string, n int) (string, int) {
+	lines := strings.Split(s, "\n")
+	if len(lines) <= n {
+		return s, 0
+	}
+	return strings.Join(lines[:n], "\n"), len(lines) - n
+}
+
+// link lays out a clickable label that expands or collapses entry i.
+func (u *UI) link(gtx C, i int, txt string) D {
+	return layout.Inset{Top: 4}.Layout(gtx, func(gtx C) D {
+		return material.Clickable(gtx, &u.expandBtns[i], u.text(13, accent, txt).Layout)
+	})
+}
+
+// layoutProse lays out text an agent wrote, formatting its Markdown unless
+// that is turned off.
+func (u *UI) layoutProse(gtx C, src string, c color.NRGBA, italic bool) D {
+	src = strings.TrimSpace(src)
+	if !u.markdownOn.Value {
+		l := u.text(15, c, src)
+		if italic {
+			l.Font.Style = font.Italic
+		}
+		return l.Layout(gtx)
+	}
+	return u.layoutMarkdown(gtx, u.markdown(src), c, italic)
+}
+
+func (u *UI) layoutMarkdown(gtx C, blocks []mdBlock, c color.NRGBA, italic bool) D {
+	children := make([]layout.FlexChild, 0, 2*len(blocks))
+	for i, b := range blocks {
+		if i > 0 {
+			gap := unit.Dp(10)
+			if b.indent > 0 && blocks[i-1].indent > 0 {
+				gap = 4
+			}
+			children = append(children, layout.Rigid(space(gap)))
+		}
+		children = append(children, layout.Rigid(func(gtx C) D { return u.layoutBlock(gtx, b, c, italic) }))
+	}
+	return layout.Flex{Axis: layout.Vertical}.Layout(gtx, children...)
+}
+
+func (u *UI) layoutBlock(gtx C, b mdBlock, c color.NRGBA, italic bool) D {
+	w := func(gtx C) D {
+		switch b.kind {
+		case mdHeading:
+			size := unit.Sp(16)
+			switch b.level {
+			case 1:
+				size = 20
+			case 2:
+				size = 18
+			}
+			return u.rich(gtx, b.spans, size, c, true, italic)
+		case mdCode:
+			gtx.Constraints.Min.X = gtx.Constraints.Max.X
+			return boxed(gtx, codeBg, codeLine, 10, u.code(13, ink, b.code).Layout)
+		case mdRule:
+			return layout.Inset{Top: 4, Bottom: 4}.Layout(gtx, hrule)
+		case mdTable:
+			return u.layoutTable(gtx, b.rows, c)
+		}
+		return u.rich(gtx, b.spans, 15, c, false, italic)
+	}
+	if b.indent > 0 {
+		inner := w
+		w = func(gtx C) D {
+			return layout.Inset{Left: unit.Dp(20 * (b.indent - 1))}.Layout(gtx, func(gtx C) D {
+				return layout.Flex{}.Layout(gtx,
+					layout.Rigid(func(gtx C) D {
+						gtx.Constraints.Min.X = gtx.Dp(22)
+						return u.text(15, c, b.marker).Layout(gtx)
+					}),
+					layout.Flexed(1, inner),
+				)
+			})
+		}
+	}
+	for range b.quote {
+		inner := w
+		w = func(gtx C) D { return leftBar(gtx, quoteBar, inner) }
+	}
+	return w(gtx)
+}
+
+// rich lays out styled spans of text.
+func (u *UI) rich(gtx C, spans []mdSpan, size unit.Sp, c color.NRGBA, bold, italic bool) D {
+	if len(spans) == 0 {
+		return D{}
+	}
+	styles := make([]styledtext.SpanStyle, 0, len(spans))
+	for _, s := range spans {
+		st := styledtext.SpanStyle{Font: font.Font{Typeface: sans}, Size: size, Color: c, Content: s.text}
+		if s.bold || bold {
+			st.Font.Weight = font.Bold
+		}
+		if s.italic || italic {
+			st.Font.Style = font.Italic
+		}
+		switch {
+		case s.code:
+			st.Font = font.Font{Typeface: mono}
+			st.Size, st.Color = size-2, codeInk
+		case s.link:
+			st.Color = accent
+		case s.strike:
+			st.Color = faint
+		}
+		styles = append(styles, st)
+	}
+	t := styledtext.Text(u.th.Shaper, styles...)
+	t.LineHeightScale = lineScale
+	return t.Layout(gtx, nil)
+}
+
+func (u *UI) layoutTable(gtx C, rows [][][]mdSpan, c color.NRGBA) D {
+	return widget.Border{Color: line, CornerRadius: 6, Width: 1}.Layout(gtx, func(gtx C) D {
+		var children []layout.FlexChild
+		for r, row := range rows {
+			if r > 0 {
+				children = append(children, layout.Rigid(hrule))
+			}
+			children = append(children, layout.Rigid(func(gtx C) D {
+				cells := make([]layout.FlexChild, len(row))
+				for i, cell := range row {
+					cells[i] = layout.Flexed(1, func(gtx C) D {
+						return layout.Inset{Left: 10, Right: 10, Top: 6, Bottom: 6}.Layout(gtx, func(gtx C) D {
+							return u.rich(gtx, cell, 14, c, r == 0, false)
+						})
+					})
+				}
+				return layout.Flex{}.Layout(gtx, cells...)
+			}))
+		}
+		return layout.Flex{Axis: layout.Vertical}.Layout(gtx, children...)
+	})
 }
