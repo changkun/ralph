@@ -8,7 +8,6 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/changkun/ralph/internal/backend"
 	"github.com/changkun/ralph/internal/loop"
 )
 
@@ -22,6 +21,7 @@ func TestParseArgs(t *testing.T) {
 	}{
 		{"defaults", []string{"/tmp"}, "claude", loop.ThinkAct, 0},
 		{"codex", []string{"--backend", "codex", "/tmp"}, "codex", loop.ThinkAct, 0},
+		{"runtime", []string{"--runtime", "podman", "/tmp"}, "claude", loop.ThinkAct, 0},
 		{"max rounds", []string{"--max-rounds", "5", "/tmp"}, "claude", loop.ThinkAct, 5},
 		{"options after folder", []string{"/tmp", "--max-rounds", "5"}, "claude", loop.ThinkAct, 5},
 		{"standalone", []string{"--pattern", "standalone", "/tmp"}, "claude", loop.Standalone, 0},
@@ -41,10 +41,14 @@ func TestParseArgs(t *testing.T) {
 	}
 }
 
-func TestParseArgsModel(t *testing.T) {
+func TestParseArgsModelAndRuntime(t *testing.T) {
 	cfg, err := parseArgs([]string{"--model", "opus", "/tmp"})
-	if err != nil || cfg.model != "opus" {
-		t.Errorf("model = %q, err = %v; want opus", cfg.model, err)
+	if err != nil || cfg.model != "opus" || cfg.runtime != "host" {
+		t.Errorf("model = %q, runtime = %q, err = %v; want opus on host", cfg.model, cfg.runtime, err)
+	}
+	cfg, err = parseArgs([]string{"--runtime", "docker", "/tmp"})
+	if err != nil || cfg.runtime != "docker" {
+		t.Errorf("runtime = %q, err = %v; want docker", cfg.runtime, err)
 	}
 }
 
@@ -60,6 +64,7 @@ func TestParseArgsErrors(t *testing.T) {
 		{"unknown pattern", []string{"--pattern", "bad", "/tmp"}},
 		{"backend without value", []string{"--backend"}},
 		{"model without value", []string{"--model"}},
+		{"unknown runtime", []string{"--runtime", "lxc", "/tmp"}},
 		{"pattern without value", []string{"--pattern"}},
 		{"max rounds without value", []string{"--max-rounds"}},
 		{"max rounds not a number", []string{"--max-rounds", "abc", "/tmp"}},
@@ -83,22 +88,31 @@ func TestParseArgsHelp(t *testing.T) {
 	}
 }
 
-// stubBackend answers every role with "ok", or with ctx's error once ctx is
-// cancelled.
-type stubBackend struct{}
-
-func (stubBackend) Run(ctx context.Context, _ backend.Turn) (string, error) {
-	if err := ctx.Err(); err != nil {
-		return "", err
+// fakeClaude installs a claude CLI that answers every turn with "ok", and
+// gives git an identity and no global configuration.
+func fakeClaude(t *testing.T) {
+	t.Helper()
+	bin := t.TempDir()
+	if err := os.WriteFile(filepath.Join(bin, "claude"), []byte("#!/bin/sh\necho '{\"type\":\"result\",\"result\":\"ok\"}'\n"), 0o755); err != nil {
+		t.Fatal(err)
 	}
-	return "ok", nil
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	t.Setenv("GIT_CONFIG_GLOBAL", filepath.Join(bin, "gitconfig"))
+	for _, k := range []string{"GIT_AUTHOR_NAME", "GIT_COMMITTER_NAME", "GIT_AUTHOR_EMAIL", "GIT_COMMITTER_EMAIL"} {
+		t.Setenv(k, "t")
+	}
+}
+
+func hostConfig(p loop.Pattern, maxRounds int, folder string) config {
+	return config{runtime: "host", backendName: "claude", pattern: p, maxRounds: maxRounds, folder: folder}
 }
 
 func TestRun(t *testing.T) {
+	fakeClaude(t)
 	for _, p := range loop.Patterns {
 		t.Run(string(p), func(t *testing.T) {
 			dir := t.TempDir()
-			if err := run(context.Background(), config{backendName: "claude", pattern: p, maxRounds: 1, folder: dir}, stubBackend{}); err != nil {
+			if err := run(context.Background(), hostConfig(p, 1, dir)); err != nil {
 				t.Fatal(err)
 			}
 			if got := loop.ResumeRound(filepath.Join(dir, ".ralph"), p); got != 1 {
@@ -109,14 +123,16 @@ func TestRun(t *testing.T) {
 }
 
 func TestRunInterrupted(t *testing.T) {
+	fakeClaude(t)
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	if err := run(ctx, config{backendName: "claude", pattern: loop.ThinkAct, folder: t.TempDir()}, stubBackend{}); err != nil {
+	if err := run(ctx, hostConfig(loop.ThinkAct, 0, t.TempDir())); err != nil {
 		t.Fatal(err)
 	}
 }
 
 func TestRunResumes(t *testing.T) {
+	fakeClaude(t)
 	dir := t.TempDir()
 	ralphDir := filepath.Join(dir, ".ralph")
 	if err := os.MkdirAll(ralphDir, 0o755); err != nil {
@@ -129,7 +145,7 @@ func TestRunResumes(t *testing.T) {
 			}
 		}
 	}
-	if err := run(context.Background(), config{backendName: "claude", pattern: loop.ThinkAct, maxRounds: 4, folder: dir}, stubBackend{}); err != nil {
+	if err := run(context.Background(), hostConfig(loop.ThinkAct, 4, dir)); err != nil {
 		t.Fatal(err)
 	}
 	if got := loop.ResumeRound(ralphDir, loop.ThinkAct); got != 4 {
@@ -137,8 +153,8 @@ func TestRunResumes(t *testing.T) {
 	}
 }
 
-func TestRunCannotCreateLogDir(t *testing.T) {
-	if err := run(context.Background(), config{pattern: loop.ThinkAct, folder: "/dev/null"}, stubBackend{}); err == nil {
+func TestRunNotAFolder(t *testing.T) {
+	if err := run(context.Background(), hostConfig(loop.ThinkAct, 0, "/dev/null")); err == nil {
 		t.Error("expected an error")
 	}
 }
@@ -161,11 +177,7 @@ func TestMainHelp(t *testing.T)       { callMain(t, []string{"--help"}, 0) }
 func TestMainRunError(t *testing.T)   { callMain(t, []string{"/dev/null"}, 1) }
 
 func TestMainSuccess(t *testing.T) {
-	bin := t.TempDir()
-	if err := os.WriteFile(filepath.Join(bin, "claude"), []byte("#!/bin/sh\necho '{\"type\":\"result\",\"result\":\"x\"}'\n"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	fakeClaude(t)
 	callMain(t, []string{"--max-rounds", "1", t.TempDir()}, 0)
 }
 
