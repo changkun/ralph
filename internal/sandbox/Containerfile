@@ -1,0 +1,15 @@
+# The image Ralph runs agents in: Debian with Node.js, git, common command
+# line tools, and the Claude Code and Codex CLIs. Ralph builds it the first
+# time it is needed and tags it with a hash of this file.
+FROM docker.io/library/node:22-bookworm-slim
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends ca-certificates curl git procps ripgrep sudo \
+ && rm -rf /var/lib/apt/lists/* \
+ && echo 'node ALL=(ALL) NOPASSWD:ALL' > /etc/sudoers.d/node \
+ && git config --system safe.directory '*' \
+ && git config --system user.name 'Ralph' \
+ && git config --system user.email 'ralph@localhost'
+RUN npm install -g @anthropic-ai/claude-code @openai/codex && npm cache clean --force
+ENV DISABLE_AUTOUPDATER=1
+USER node
+WORKDIR /work
