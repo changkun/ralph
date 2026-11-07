@@ -115,10 +115,13 @@ The app sets its text in [Lato](https://www.latofonts.com) and code in [DejaVu S
 ## Usage
 
 ```bash
-go build -o ralph .
-go build -o ralph-gui ./cmd/ralph-gui
+# Build ./ralph and ./ralph-gui
+make build
 
-# The desktop app, optionally opening a folder
+# Build the desktop app and start it
+make run
+
+# The desktop app, opening a folder
 ./ralph-gui /path/to/project
 
 # Claude Code with the think+act pattern on this machine, until Ctrl-C
