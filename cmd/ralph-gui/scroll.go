@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"gioui.org/gesture"
+	"gioui.org/io/event"
 	"gioui.org/io/pointer"
 	"gioui.org/layout"
 	"gioui.org/op"
@@ -15,6 +16,8 @@ import (
 	"gioui.org/unit"
 	"gioui.org/widget"
 	"gioui.org/widget/material"
+
+	"github.com/changkun/ralph/cmd/ralph-gui/internal/trackpad"
 )
 
 // splitterWidth is the width of the handle between two columns.
@@ -82,28 +85,41 @@ func fillRect(gtx C, r image.Rectangle, c color.NRGBA) {
 	paint.PaintOp{}.Add(gtx.Ops)
 }
 
-// scroller scrolls a list as macOS does. The list follows the trackpad or
-// wheel; past either end, the content stretches with growing resistance and
-// springs back when the scrolling stops, and reaching an end at speed makes
-// it bounce. A thin scroll indicator shows only while scrolling.
-//
-// Gio reports scroll deltas but not whether a finger is on the trackpad, so
-// a pause in scrolling stands for the finger lifting.
+// scroller scrolls a list as macOS does. The content follows the fingers
+// on the trackpad; past either end, it stretches with growing resistance
+// and springs back once they lift. Momentum that carries the content to an
+// end bounces off it. A mouse wheel stops at the ends. A thin scroll
+// indicator shows only while scrolling.
 type scroller struct {
-	scroll   gesture.Scroll
-	y, v     float32   // the stretch past an end in pixels, positive past the end, and its velocity
-	speed    float32   // scrolling speed in pixels per second
-	bouncing bool      // whether the stretch is a bounce, which ignores further scrolling the same way
-	input    time.Time // when scrolling last happened
-	frame    time.Time // the previous frame
-	shown    time.Time // when the scroll indicator was last needed
+	y, v     float32       // the stretch past an end in pixels, positive past the end, and its velocity
+	frac     float32       // scrolling not yet applied to the list, less than a pixel
+	speed    float32       // scrolling speed in pixels per second, by the events' times
+	last     time.Duration // the time of the latest scroll event
+	gesture  uint64        // the trackpad gesture that last scrolled the list
+	touching bool          // whether that gesture's fingers are on the trackpad
+	ignore   uint64        // a gesture whose momentum is ignored, because it bounced or the fingers let go of a stretch
+	frame    time.Time     // the previous frame
+	shown    time.Time     // when the scroll indicator was last needed
 }
+
+// scrollKind is what scrolls a list.
+type scrollKind int
+
+const (
+	wheelScroll    scrollKind = iota // a mouse wheel, which stops at the ends
+	fingerScroll                     // fingers on a trackpad, which stretch the content past the ends
+	momentumScroll                   // the momentum after they lift, which bounces off the ends
+)
+
+// The trackpad's state, which tests replace.
+var (
+	scrollPhaseOf = trackpad.Lookup
+	scrollGesture = trackpad.Current
+)
 
 const (
 	rubberBand    = 0.55                   // how stiff stretching is; the constant Apple uses
-	releaseAfter  = 80 * time.Millisecond  // a pause this long ends a scroll
 	springFreq    = 16.5                   // per second; the stretch settles in about 0.35s
-	bounceSpeed   = 1200                   // dp per second; reaching an end faster bounces
 	maxBounce     = 3000                   // dp per second; the fastest a bounce starts
 	indicatorHold = 700 * time.Millisecond // how long the indicator stays after scrolling
 	indicatorFade = 250 * time.Millisecond
@@ -120,7 +136,7 @@ func (s *scroller) layout(gtx C, th *material.Theme, l *widget.List, n int, el l
 	ls.Track.MinorPadding = 2
 	ls.Indicator.MinorWidth = 7
 	ls.Indicator.CornerRadius = 3.5
-	if l.Scrollbar.Dragging() || l.Scrollbar.IndicatorHovered() {
+	if s.touching || l.Scrollbar.Dragging() || l.Scrollbar.IndicatorHovered() {
 		s.shown = gtx.Now
 	}
 	alpha := 1 - min(1, max(0, float32(gtx.Now.Sub(s.shown)-indicatorHold)/float32(indicatorFade)))
@@ -136,11 +152,11 @@ func (s *scroller) layout(gtx C, th *material.Theme, l *widget.List, n int, el l
 		return el(gtx, i)
 	})
 
-	// Take all scrolling over the list, on top of it, and let other
-	// events through to the list and its content.
+	// Take all vertical scrolling over the list, on top of it, and let
+	// other events through to the list and its content.
 	defer pointer.PassOp{}.Push(gtx.Ops).Pop()
 	defer clip.Rect{Max: size}.Push(gtx.Ops).Pop()
-	s.scroll.Add(gtx.Ops)
+	event.Op(gtx.Ops, s)
 	// Fill the whole area even when the content is shorter: a layout that
 	// aligns its children, such as a Stack, would otherwise move the list
 	// away from the top, and the area that takes scrolling with it.
@@ -156,25 +172,32 @@ func (s *scroller) update(gtx C, l *layout.List, n int, height float32) {
 	}
 	s.frame = gtx.Now
 	unbounded := pointer.ScrollRange{Min: math.MinInt32 / 2, Max: math.MaxInt32 / 2}
-	released := gtx.Now.Sub(s.input) > releaseAfter
-	d := float32(s.scroll.Update(gtx.Metric, gtx.Source, gtx.Now, gesture.Vertical, pointer.ScrollRange{}, unbounded))
-	if d != 0 {
-		if released { // a new scroll
-			s.speed, s.bouncing = 0, false
+	for {
+		ev, ok := gtx.Event(pointer.Filter{Target: s, Kinds: pointer.Scroll, ScrollY: unbounded})
+		if !ok {
+			break
 		}
-		if dt > 0 {
-			s.speed = 0.5*s.speed + 0.5*d/dt
+		if e, ok := ev.(pointer.Event); ok {
+			s.handle(gtx, l, n, e, height)
 		}
-		s.input, s.shown, released = gtx.Now, gtx.Now, false
-		s.scrollBy(gtx, l, n, d, height)
+	}
+
+	// Gio drops the event that ends a gesture, which scrolls nothing, so
+	// ask the trackpad whether the fingers are still down.
+	down, g := scrollGesture()
+	touching := down && g == s.gesture && g != 0
+	if s.touching && !touching && s.y != 0 {
+		s.ignore = s.gesture // the stretch springs back instead
+	}
+	s.touching = touching
+	if touching {
+		gtx.Execute(op.InvalidateCmd{}) // to see them lift
+		return                          // the stretch stays where they put it
 	}
 	if s.y == 0 && s.v == 0 {
 		return
 	}
 	gtx.Execute(op.InvalidateCmd{})
-	if !released && !s.bouncing {
-		return // held where the scrolling put it
-	}
 	// A critically damped spring pulls the stretch back to 0.
 	for t := dt; t > 0; t -= 1.0 / 240 {
 		h := min(t, 1.0/240)
@@ -186,27 +209,54 @@ func (s *scroller) update(gtx C, l *layout.List, n int, height float32) {
 	}
 }
 
+// handle applies a scroll event.
+func (s *scroller) handle(gtx C, l *layout.List, n int, e pointer.Event, height float32) {
+	d := e.Scroll.Y
+	if dt := (e.Time - s.last).Seconds(); dt > 0 && dt < 0.1 {
+		s.speed = 0.5*s.speed + 0.5*d/float32(dt)
+	} else {
+		s.speed = 0
+	}
+	s.last = e.Time
+	if d == 0 {
+		return
+	}
+	s.shown = gtx.Now
+	ph, ok := scrollPhaseOf(e.Time)
+	switch {
+	case !ok || ph.Finger == 0 && ph.Momentum == 0:
+		s.scrollBy(gtx, l, n, d, height, wheelScroll)
+	case ph.Finger != 0:
+		if ph.Gesture != s.gesture {
+			// Fingers down again catch the content where it is.
+			s.gesture, s.v = ph.Gesture, 0
+		}
+		s.touching = true
+		s.scrollBy(gtx, l, n, d, height, fingerScroll)
+	case ph.Gesture == s.ignore:
+	case s.y != 0:
+		// The fingers let go of a stretch, which springs back.
+		s.ignore = ph.Gesture
+	default:
+		s.gesture = ph.Gesture
+		s.scrollBy(gtx, l, n, d, height, momentumScroll)
+	}
+}
+
 // scrollBy scrolls d pixels: first out of any stretch, then through the
 // list, then past its end.
-func (s *scroller) scrollBy(gtx C, l *layout.List, n int, d, height float32) {
-	if s.bouncing {
-		if (d > 0) == (s.speed > 0) {
-			return // the rest of the scroll that bounced
-		}
-		s.bouncing = false
-	}
-	if s.y != 0 && (d > 0) != (s.y > 0) {
+func (s *scroller) scrollBy(gtx C, l *layout.List, n int, d, height float32, kind scrollKind) {
+	if kind == fingerScroll && s.y != 0 && (d > 0) != (s.y > 0) {
 		x := unstretch(s.y, height) + d
 		if (x > 0) != (s.y > 0) {
 			s.y, d = 0, x
 		} else {
 			s.y, d = stretch(x, height), 0
 		}
-		s.v = 0
 	}
 	if d != 0 && s.y == 0 {
-		// How far the list can move, as of its last layout, as the list
-		// itself works it out.
+		// How far the list can move, as the list itself works it out
+		// from its last layout and the scrolling since.
 		lo, hi := float32(math.Inf(-1)), float32(math.Inf(1))
 		if l.Position.First == 0 {
 			lo = min(0, -float32(l.Position.Offset))
@@ -215,24 +265,31 @@ func (s *scroller) scrollBy(gtx C, l *layout.List, n int, d, height float32) {
 			hi = max(0, -float32(l.Position.OffsetLast))
 		}
 		moved := max(lo, min(d, hi))
-		if moved != 0 {
-			l.Position.Offset += int(moved)
-			if moved < 0 {
-				l.Position.BeforeEnd = true
-			}
+		s.frac += moved
+		step := int(s.frac)
+		s.frac -= float32(step)
+		l.Position.Offset += step
+		l.Position.OffsetLast += step
+		if moved < 0 {
+			l.Position.BeforeEnd = true
 		}
 		d -= moved
 	}
 	if d == 0 {
 		return
 	}
-	if abs32(s.speed) > float32(gtx.Dp(bounceSpeed)) {
-		// Reaching an end at speed bounces off it.
+	switch kind {
+	case fingerScroll:
+		s.y = stretch(unstretch(s.y, height)+d, height)
+	case momentumScroll:
+		// Reaching an end bounces off it, and ignores the rest.
 		limit := float32(gtx.Dp(maxBounce))
-		s.bouncing, s.v = true, max(-limit, min(s.speed, limit))
-		return
+		s.v = min(abs32(s.speed), limit)
+		if d < 0 {
+			s.v = -s.v
+		}
+		s.ignore = s.gesture
 	}
-	s.y, s.v = stretch(unstretch(s.y, height)+d, height), 0
 }
 
 // stretch returns how far content moves when scrolled x pixels past an end
