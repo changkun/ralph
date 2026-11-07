@@ -22,8 +22,8 @@ func TestParseArgs(t *testing.T) {
 		{"defaults", []string{"/tmp"}, "claude", loop.ThinkAct, 0},
 		{"codex", []string{"--backend", "codex", "/tmp"}, "codex", loop.ThinkAct, 0},
 		{"runtime", []string{"--runtime", "podman", "/tmp"}, "claude", loop.ThinkAct, 0},
-		{"max rounds", []string{"--max-rounds", "5", "/tmp"}, "claude", loop.ThinkAct, 5},
-		{"options after folder", []string{"/tmp", "--max-rounds", "5"}, "claude", loop.ThinkAct, 5},
+		{"rounds", []string{"--rounds", "5", "/tmp"}, "claude", loop.ThinkAct, 5},
+		{"options after folder", []string{"/tmp", "--rounds", "5"}, "claude", loop.ThinkAct, 5},
 		{"standalone", []string{"--pattern", "standalone", "/tmp"}, "claude", loop.Standalone, 0},
 		{"legacy pattern", []string{"--pattern", "builder", "/tmp"}, "claude", loop.Standalone, 0},
 		{"full pipeline", []string{"--pattern", "think+act+evaluator+archivist", "/tmp"}, "claude", loop.ThinkActEvaluatorArchivist, 0},
@@ -34,7 +34,7 @@ func TestParseArgs(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if cfg.backendName != tt.backend || cfg.pattern != tt.pattern || cfg.maxRounds != tt.rounds || cfg.folder != "/tmp" {
+			if cfg.backendName != tt.backend || cfg.pattern != tt.pattern || cfg.rounds != tt.rounds || cfg.folder != "/tmp" {
 				t.Errorf("got %+v", cfg)
 			}
 		})
@@ -66,10 +66,10 @@ func TestParseArgsErrors(t *testing.T) {
 		{"model without value", []string{"--model"}},
 		{"unknown runtime", []string{"--runtime", "lxc", "/tmp"}},
 		{"pattern without value", []string{"--pattern"}},
-		{"max rounds without value", []string{"--max-rounds"}},
-		{"max rounds not a number", []string{"--max-rounds", "abc", "/tmp"}},
-		{"max rounds trailing junk", []string{"--max-rounds", "5x", "/tmp"}},
-		{"max rounds negative", []string{"--max-rounds", "-1", "/tmp"}},
+		{"rounds without value", []string{"--rounds"}},
+		{"rounds not a number", []string{"--rounds", "abc", "/tmp"}},
+		{"rounds trailing junk", []string{"--rounds", "5x", "/tmp"}},
+		{"rounds negative", []string{"--rounds", "-1", "/tmp"}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -103,8 +103,8 @@ func fakeClaude(t *testing.T) {
 	}
 }
 
-func hostConfig(p loop.Pattern, maxRounds int, folder string) config {
-	return config{runtime: "host", backendName: "claude", pattern: p, maxRounds: maxRounds, folder: folder}
+func hostConfig(p loop.Pattern, rounds int, folder string) config {
+	return config{runtime: "host", backendName: "claude", pattern: p, rounds: rounds, folder: folder}
 }
 
 func TestRun(t *testing.T) {
@@ -145,11 +145,12 @@ func TestRunResumes(t *testing.T) {
 			}
 		}
 	}
-	if err := run(context.Background(), hostConfig(loop.ThinkAct, 4, dir)); err != nil {
+	// --rounds counts the rounds of this run only.
+	if err := run(context.Background(), hostConfig(loop.ThinkAct, 2, dir)); err != nil {
 		t.Fatal(err)
 	}
-	if got := loop.ResumeRound(ralphDir, loop.ThinkAct); got != 4 {
-		t.Errorf("finished rounds = %d, want 4", got)
+	if got := loop.ResumeRound(ralphDir, loop.ThinkAct); got != 5 {
+		t.Errorf("finished rounds = %d, want 5", got)
 	}
 }
 
@@ -178,7 +179,7 @@ func TestMainRunError(t *testing.T)   { callMain(t, []string{"/dev/null"}, 1) }
 
 func TestMainSuccess(t *testing.T) {
 	fakeClaude(t)
-	callMain(t, []string{"--max-rounds", "1", t.TempDir()}, 0)
+	callMain(t, []string{"--rounds", "1", t.TempDir()}, 0)
 }
 
 func TestMainAgentFailure(t *testing.T) {
@@ -187,5 +188,5 @@ func TestMainAgentFailure(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
-	callMain(t, []string{"--max-rounds", "1", t.TempDir()}, 1)
+	callMain(t, []string{"--rounds", "1", t.TempDir()}, 1)
 }

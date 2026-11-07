@@ -191,6 +191,16 @@ func TestViews(t *testing.T) {
 	if last := u.entries[len(u.entries)-1]; !last.bad || !strings.Contains(last.text, "not supported") {
 		t.Errorf("last entry = %+v", last)
 	}
+
+	// Starting again continues after the round that finished.
+	if s := u.roundsText(); u.finished != 1 || s != "Runs until you stop it." {
+		t.Errorf("finished = %d, rounds = %q", u.finished, s)
+	}
+	u.rounds.SetText("3")
+	if s := u.roundsText(); s != "Runs rounds 2 to 4, then stops." {
+		t.Errorf("rounds = %q", s)
+	}
+	u.rounds.SetText("")
 	frame(t, u)
 	screenshot(t, u, "live")
 
@@ -225,7 +235,7 @@ func TestViews(t *testing.T) {
 
 	// A running session's latest turn is in progress, in the live view.
 	write(t, filepath.Join(folder, session.LocalDir, "status.json"),
-		`{"pid":`+strconv.Itoa(os.Getpid())+`,"state":"running","round":2,"role":"strategist"}`)
+		`{"pid":`+strconv.Itoa(os.Getpid())+`,"state":"running","round":2,"until":3,"role":"strategist"}`)
 	u.showView(viewLive)
 	u.poll()
 	if !u.active() {
@@ -234,7 +244,7 @@ func TestViews(t *testing.T) {
 	if _, _, running := u.turnState(u.turns[2]); !running {
 		t.Error("the latest turn is not in progress")
 	}
-	if s, _ := u.statusText(); s != "Running round 2: Strategist." {
+	if s, _ := u.statusText(); s != "Running round 2 of 3: Strategist." {
 		t.Errorf("status = %q", s)
 	}
 	if k := kinds(u.entries); strings.HasSuffix(k, "N") {
@@ -399,7 +409,7 @@ func TestSettings(t *testing.T) {
 	f.model.SetText(" gpt-5 ")
 	f.prompt.SetText("{{.Nope}}")
 	frame(t, u)
-	if u.settings.Pattern != loop.ThinkActEvaluatorArchivist || u.settings.MaxRounds != 3 || u.settings.Agents[backend.Executor].Model != "gpt-5" {
+	if u.settings.Pattern != loop.ThinkActEvaluatorArchivist || u.settings.Rounds != 3 || u.settings.Agents[backend.Executor].Model != "gpt-5" {
 		t.Errorf("settings = %+v", u.settings)
 	}
 	if u.invalid == nil || !strings.Contains(u.invalid.Error(), "executor prompt") {
@@ -420,7 +430,7 @@ func TestSettings(t *testing.T) {
 	}
 	u.saveSettings()
 	saved, err := session.Load(folder)
-	if err != nil || saved.Agents[backend.Executor].Backend != "codex" || saved.MaxRounds != 3 {
+	if err != nil || saved.Agents[backend.Executor].Backend != "codex" || saved.Rounds != 3 {
 		t.Errorf("saved %+v, %v", saved, err)
 	}
 }
@@ -473,7 +483,7 @@ func TestStatusText(t *testing.T) {
 	u.launchedPID, u.hasStatus = 0, true
 	for state, want := range map[session.State]string{
 		session.Stopped:  "Stopped.",
-		session.Finished: "Finished its last round.",
+		session.Finished: "Ran the rounds asked for, up to round 0.",
 		session.Running:  "The session stopped unexpectedly; see the console.",
 	} {
 		u.status = session.Status{PID: 1 << 30, State: state}

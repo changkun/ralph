@@ -51,6 +51,7 @@ type UI struct {
 	status      session.Status
 	hasStatus   bool
 	launchedPID int    // the engine this app started, until it reports in
+	finished    int    // rounds that finished, which a start continues after
 	message     string // the outcome of the last action, if it failed
 	lastPoll    time.Time
 
@@ -197,8 +198,8 @@ func (u *UI) setSettings(s session.Settings) {
 	u.settings = s
 	u.runtime.Value = s.Runtime
 	u.pattern.Value = string(s.Pattern)
-	if s.MaxRounds > 0 {
-		u.rounds.SetText(strconv.Itoa(s.MaxRounds))
+	if s.Rounds > 0 {
+		u.rounds.SetText(strconv.Itoa(s.Rounds))
 	} else {
 		u.rounds.SetText("")
 	}
@@ -219,7 +220,7 @@ func (u *UI) readForm() session.Settings {
 		Runtime: u.runtime.Value,
 		Agents:  map[backend.Role]session.Agent{},
 	}
-	s.MaxRounds, _ = strconv.Atoi(u.rounds.Text())
+	s.Rounds, _ = strconv.Atoi(u.rounds.Text())
 	for role, f := range u.roles {
 		s.Agents[role] = session.Agent{
 			Backend: f.backend.Value,
@@ -232,7 +233,7 @@ func (u *UI) readForm() session.Settings {
 }
 
 func equal(a, b session.Settings) bool {
-	return a.Pattern == b.Pattern && a.Runtime == b.Runtime && a.MaxRounds == b.MaxRounds && maps.Equal(a.Agents, b.Agents)
+	return a.Pattern == b.Pattern && a.Runtime == b.Runtime && a.Rounds == b.Rounds && maps.Equal(a.Agents, b.Agents)
 }
 
 // check validates the settings and finds the logins they need.
@@ -392,6 +393,7 @@ func (u *UI) poll() {
 		u.logins = u.settings.Logins()
 	}
 	u.turns = session.Turns(u.folder)
+	u.finished = loop.ResumeRound(filepath.Join(u.folder, session.LogDir), u.settings.Pattern)
 	for len(u.turnBtns) < len(u.turns)+firstTurnView {
 		u.turnBtns = append(u.turnBtns, widget.Clickable{})
 	}
@@ -591,6 +593,9 @@ func (u *UI) statusText() (string, bool) {
 		if st.Role == "" {
 			return "Running.", false
 		}
+		if st.Until > 0 {
+			return fmt.Sprintf("Running round %d of %d: %s.", st.Round, st.Until, roleTitle(st.Role)), false
+		}
 		return fmt.Sprintf("Running round %d: %s.", st.Round, roleTitle(st.Role)), false
 	}
 	switch st.State {
@@ -599,7 +604,7 @@ func (u *UI) statusText() (string, bool) {
 	case session.Stopped:
 		return "Stopped.", false
 	case session.Finished:
-		return "Finished its last round.", false
+		return fmt.Sprintf("Ran the rounds asked for, up to round %d.", st.Round), false
 	case session.Failed:
 		return "Failed: " + st.Error, true
 	}

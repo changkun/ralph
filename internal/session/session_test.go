@@ -84,7 +84,7 @@ func TestValidate(t *testing.T) {
 	}{
 		{"pattern", func(s *Settings) { s.Pattern = "bad" }, "unknown pattern"},
 		{"runtime", func(s *Settings) { s.Runtime = "lxc" }, "unknown runtime"},
-		{"rounds", func(s *Settings) { s.MaxRounds = -1 }, "negative"},
+		{"rounds", func(s *Settings) { s.Rounds = -1 }, "negative"},
 		{"backend", func(s *Settings) { s.Agents[backend.Executor] = Agent{Backend: "gpt"} }, `executor: unknown backend "gpt"`},
 		{"template", func(s *Settings) {
 			a := s.Agents[backend.Strategist]
@@ -114,7 +114,7 @@ func TestSaveLoad(t *testing.T) {
 	s := Defaults()
 	s.Pattern = loop.ThinkActEvaluator
 	s.Runtime = Host
-	s.MaxRounds = 3
+	s.Rounds = 3
 	exec := s.Agents[backend.Executor]
 	exec.Backend, exec.Model, exec.System = "codex", "gpt-5", "be brief"
 	s.Agents[backend.Executor] = exec
@@ -129,7 +129,7 @@ func TestSaveLoad(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got.Pattern != s.Pattern || got.Runtime != s.Runtime || got.MaxRounds != 3 {
+	if got.Pattern != s.Pattern || got.Runtime != s.Runtime || got.Rounds != 3 {
 		t.Errorf("loaded %+v", got)
 	}
 	for _, role := range Roles {
@@ -218,7 +218,7 @@ func TestLogins(t *testing.T) {
 func hostSettings() Settings {
 	s := Defaults()
 	s.Runtime = Host
-	s.MaxRounds = 1
+	s.Rounds = 1
 	return s
 }
 
@@ -261,6 +261,21 @@ func TestRunOnHost(t *testing.T) {
 	if len(turns) != 2 || turns[0].Role != backend.Strategist || turns[1].Role != backend.Executor || !turns[1].Done {
 		t.Errorf("turns = %+v", turns)
 	}
+
+	// Running again continues with as many rounds more.
+	out.Reset()
+	if err := Run(context.Background(), folder, hostSettings(), &out); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out.String(), "Running rounds 2 to 2") {
+		t.Errorf("output does not say which rounds run:\n%s", out.String())
+	}
+	if st, err := ReadStatus(folder); err != nil || st.State != Finished || st.Round != 2 || st.Until != 2 {
+		t.Errorf("status = %+v, %v", st, err)
+	}
+	if turns := Turns(folder); len(turns) != 4 {
+		t.Errorf("turns = %+v", turns)
+	}
 }
 
 func TestRunInSandbox(t *testing.T) {
@@ -278,7 +293,7 @@ esac`,
 	})
 	s := Defaults()
 	s.Runtime = "podman"
-	s.MaxRounds = 1
+	s.Rounds = 1
 	if err := Run(context.Background(), folder, s, &strings.Builder{}); err != nil {
 		t.Fatal(err)
 	}

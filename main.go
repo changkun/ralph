@@ -4,7 +4,7 @@
 // Usage:
 //
 //	ralph [--runtime host|podman|docker] [--backend claude|codex] [--model NAME]
-//	      [--pattern NAME] [--max-rounds N] <folder>
+//	      [--pattern NAME] [--rounds N] <folder>
 //
 // Run ralph --help for the list of patterns. The ralph-gui command offers
 // the same with per-role settings and a live view of the agents' work.
@@ -40,7 +40,8 @@ Options:
   --pattern NAME           roles in each round (default think+act); one of
                            standalone, think+act, think+act+evaluator,
                            think+act+evaluator+archivist
-  --max-rounds N           stop after round N; 0 means no limit (default 0)
+  --rounds N               run N rounds after those already finished, then
+                           stop; 0 means no limit (default 0)
   -h, --help               show this help
 `
 
@@ -52,7 +53,7 @@ type config struct {
 	backendName string
 	model       string
 	pattern     loop.Pattern
-	maxRounds   int
+	rounds      int
 	folder      string
 }
 
@@ -71,7 +72,7 @@ func parseArgs(args []string) (config, error) {
 			cfg.folder = arg
 			continue
 		}
-		if !slices.Contains([]string{"--runtime", "--backend", "--model", "--pattern", "--max-rounds"}, arg) {
+		if !slices.Contains([]string{"--runtime", "--backend", "--model", "--pattern", "--rounds"}, arg) {
 			return cfg, fmt.Errorf("unknown option %s", arg)
 		}
 		if len(args) == 0 {
@@ -98,12 +99,12 @@ func parseArgs(args []string) (config, error) {
 				return cfg, err
 			}
 			cfg.pattern = p
-		case "--max-rounds":
+		case "--rounds":
 			n, err := strconv.Atoi(value)
 			if err != nil || n < 0 {
-				return cfg, fmt.Errorf("--max-rounds must be a non-negative integer, got %q", value)
+				return cfg, fmt.Errorf("--rounds must be a non-negative integer, got %q", value)
 			}
-			cfg.maxRounds = n
+			cfg.rounds = n
 		}
 	}
 	if cfg.folder == "" {
@@ -118,7 +119,7 @@ func run(ctx context.Context, cfg config) error {
 	s := session.Defaults()
 	s.Runtime = cfg.runtime
 	s.Pattern = cfg.pattern
-	s.MaxRounds = cfg.maxRounds
+	s.Rounds = cfg.rounds
 	for role, a := range s.Agents {
 		a.Backend, a.Model = cfg.backendName, cfg.model
 		s.Agents[role] = a

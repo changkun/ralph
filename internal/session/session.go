@@ -57,10 +57,10 @@ func DefaultAgent(role backend.Role) Agent {
 
 // Settings configures a session.
 type Settings struct {
-	Pattern   loop.Pattern
-	Runtime   string // one of Runtimes
-	MaxRounds int    // 0 means no limit
-	Agents    map[backend.Role]Agent
+	Pattern loop.Pattern
+	Runtime string // one of Runtimes
+	Rounds  int    // rounds to run each time the session starts; 0 means no limit
+	Agents  map[backend.Role]Agent
 }
 
 // Defaults returns the default settings: the think+act pattern, the first
@@ -85,8 +85,8 @@ func (s Settings) Validate() error {
 	if !slices.Contains(Runtimes, s.Runtime) {
 		return fmt.Errorf("unknown runtime %q; want one of %s", s.Runtime, strings.Join(Runtimes, ", "))
 	}
-	if s.MaxRounds < 0 {
-		return errors.New("the maximum number of rounds cannot be negative")
+	if s.Rounds < 0 {
+		return errors.New("the number of rounds cannot be negative")
 	}
 	for _, role := range s.Pattern.Roles() {
 		if _, err := s.Agents[role].template(role); err != nil {
@@ -110,10 +110,10 @@ func (a Agent) template(role backend.Role) (*prompt.Template, error) {
 // file is how Settings are saved. Prompts equal to the built-in ones are
 // left out, so that they follow changes to the built-in prompts.
 type file struct {
-	Pattern   loop.Pattern               `json:"pattern"`
-	Runtime   string                     `json:"runtime"`
-	MaxRounds int                        `json:"max_rounds,omitempty"`
-	Agents    map[backend.Role]fileAgent `json:"agents"`
+	Pattern loop.Pattern               `json:"pattern"`
+	Runtime string                     `json:"runtime"`
+	Rounds  int                        `json:"rounds,omitempty"`
+	Agents  map[backend.Role]fileAgent `json:"agents"`
 }
 
 type fileAgent struct {
@@ -146,7 +146,7 @@ func Load(folder string) (Settings, error) {
 	if f.Runtime != "" {
 		s.Runtime = f.Runtime
 	}
-	s.MaxRounds = f.MaxRounds
+	s.Rounds = f.Rounds
 	for role, fa := range f.Agents {
 		a, ok := s.Agents[role]
 		if !ok {
@@ -169,7 +169,7 @@ func Load(folder string) (Settings, error) {
 
 // Save saves s in folder.
 func (s Settings) Save(folder string) error {
-	f := file{Pattern: s.Pattern, Runtime: s.Runtime, MaxRounds: s.MaxRounds, Agents: map[backend.Role]fileAgent{}}
+	f := file{Pattern: s.Pattern, Runtime: s.Runtime, Rounds: s.Rounds, Agents: map[backend.Role]fileAgent{}}
 	for role, a := range s.Agents {
 		def := DefaultAgent(role)
 		fa := fileAgent{Backend: a.Backend, Model: a.Model}
@@ -302,7 +302,7 @@ const (
 	Starting State = "starting" // preparing the folder or the sandbox
 	Running  State = "running"  // running rounds
 	Stopped  State = "stopped"  // interrupted
-	Finished State = "finished" // ran its last round
+	Finished State = "finished" // ran the rounds it was asked to
 	Failed   State = "failed"   // stopped by an error
 )
 
@@ -314,6 +314,7 @@ type Status struct {
 	Pattern loop.Pattern `json:"pattern"`
 	Runtime string       `json:"runtime"`
 	Round   int          `json:"round,omitempty"` // the round in progress
+	Until   int          `json:"until,omitempty"` // the last round to run, if there is a limit
 	Role    backend.Role `json:"role,omitempty"`  // the role in progress
 	Error   string       `json:"error,omitempty"` // why the session failed
 	Time    time.Time    `json:"time"`            // when the status last changed
@@ -428,8 +429,9 @@ func Run(ctx context.Context, folder string, s Settings, out io.Writer) (err err
 	if finished > 0 {
 		fmt.Fprintf(out, "Resuming after round %d\n", finished)
 	}
-	if s.MaxRounds > 0 {
-		fmt.Fprintf(out, "Max rounds: %d\n", s.MaxRounds)
+	if s.Rounds > 0 {
+		st.Until = finished + s.Rounds
+		fmt.Fprintf(out, "Running rounds %d to %d\n", finished+1, st.Until)
 	}
 	fmt.Fprintln(out)
 
@@ -441,7 +443,7 @@ func Run(ctx context.Context, folder string, s Settings, out io.Writer) (err err
 		Folder:      folder,
 		AgentFolder: agentFolder,
 		LogDir:      logDir,
-		MaxRounds:   s.MaxRounds,
+		MaxRounds:   st.Until,
 		Output:      out,
 		OnStep: func(round int, role backend.Role) {
 			st.Round, st.Role = round, role
