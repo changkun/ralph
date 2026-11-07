@@ -163,14 +163,13 @@ func (u *UI) layoutSidebar(gtx C) D {
 			return u.label(12, muted, "Runs coding agents in rounds on a project, committing it after each round.").Layout(gtx)
 		},
 		u.heading("Project folder"),
+		// Another folder can be opened while a session runs; the session
+		// keeps running, and reopening its folder follows it again.
 		func(gtx C) D {
 			return layout.Flex{Alignment: layout.Middle}.Layout(gtx,
-				layout.Flexed(1, u.enabled(func(gtx C) D { return u.box(gtx, &u.folderEd, "Path, or choose a folder", false) })),
+				layout.Flexed(1, func(gtx C) D { return u.box(gtx, &u.folderEd, "Path, or choose a folder", false) }),
 				layout.Rigid(space(8)),
-				layout.Rigid(u.enabled(func(gtx C) D {
-					b := material.Button(u.th, &u.chooseBtn, "Choose…")
-					return b.Layout(gtx)
-				})),
+				layout.Rigid(material.Button(u.th, &u.chooseBtn, "Choose…").Layout),
 			)
 		},
 		u.layoutControls,
