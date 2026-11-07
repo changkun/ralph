@@ -249,14 +249,12 @@ func (u *UI) layoutSidebar(gtx C) D {
 		items = append(items, u.heading(roleTitle(role)), u.enabled(func(gtx C) D { return u.layoutRole(gtx, role) }))
 	}
 	items = append(items, space(40))
-	return u.sidebarElastic.layout(gtx, &u.sidebar.List, func(gtx C) D {
-		return material.List(u.th, &u.sidebar).Layout(gtx, len(items), func(gtx C, i int) D {
-			top := unit.Dp(0)
-			if i == 0 {
-				top = 22
-			}
-			return layout.Inset{Left: 22, Right: 22, Top: top}.Layout(gtx, items[i])
-		})
+	return u.sidebarScroll.layout(gtx, u.th, &u.sidebar, len(items), func(gtx C, i int) D {
+		top := unit.Dp(0)
+		if i == 0 {
+			top = 22
+		}
+		return layout.Inset{Left: 22, Right: 22, Top: top}.Layout(gtx, items[i])
 	})
 }
 
@@ -407,40 +405,38 @@ func (u *UI) layoutTurns(gtx C) D {
 	if u.folder == "" {
 		return D{Size: gtx.Constraints.Max}
 	}
-	return u.turnsElastic.layout(gtx, &u.turnList.List, func(gtx C) D {
-		n := len(u.turns) + firstTurnView + 1 // and space at the end
-		return material.List(u.th, &u.turnList).Layout(gtx, n, func(gtx C, i int) D {
-			switch {
-			case i == viewLive:
-				return layout.Inset{Top: 14}.Layout(gtx, func(gtx C) D {
-					return u.layoutTurnItem(gtx, i, "Live", "", ink, accent)
-				})
-			case i == viewConsole:
-				return u.layoutTurnItem(gtx, i, "Console", "", ink, faint)
-			case i == n-1:
-				return layout.Spacer{Height: 40}.Layout(gtx)
-			}
-			t := u.turns[i-firstTurnView]
-			mark, ok, running := u.turnState(t)
-			markColor := go_
-			switch {
-			case running:
-				markColor = accent
-			case !ok:
-				markColor = danger
-			}
-			item := func(gtx C) D { return u.layoutTurnItem(gtx, i, roleTitle(t.Role), mark, markColor, roleColors[t.Role]) }
-			if i > firstTurnView && u.turns[i-firstTurnView-1].Round == t.Round {
-				return item(gtx)
-			}
-			return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
-				layout.Rigid(func(gtx C) D {
-					return layout.Inset{Left: 18, Top: 16, Bottom: 4}.Layout(gtx,
-						u.bold(13, muted, fmt.Sprintf("Round %d", t.Round)).Layout)
-				}),
-				layout.Rigid(item),
-			)
-		})
+	n := len(u.turns) + firstTurnView + 1 // and space at the end
+	return u.turnsScroll.layout(gtx, u.th, &u.turnList, n, func(gtx C, i int) D {
+		switch {
+		case i == viewLive:
+			return layout.Inset{Top: 14}.Layout(gtx, func(gtx C) D {
+				return u.layoutTurnItem(gtx, i, "Live", "", ink, accent)
+			})
+		case i == viewConsole:
+			return u.layoutTurnItem(gtx, i, "Console", "", ink, faint)
+		case i == n-1:
+			return layout.Spacer{Height: 40}.Layout(gtx)
+		}
+		t := u.turns[i-firstTurnView]
+		mark, ok, running := u.turnState(t)
+		markColor := go_
+		switch {
+		case running:
+			markColor = accent
+		case !ok:
+			markColor = danger
+		}
+		item := func(gtx C) D { return u.layoutTurnItem(gtx, i, roleTitle(t.Role), mark, markColor, roleColors[t.Role]) }
+		if i > firstTurnView && u.turns[i-firstTurnView-1].Round == t.Round {
+			return item(gtx)
+		}
+		return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
+			layout.Rigid(func(gtx C) D {
+				return layout.Inset{Left: 18, Top: 16, Bottom: 4}.Layout(gtx,
+					u.bold(13, muted, fmt.Sprintf("Round %d", t.Round)).Layout)
+			}),
+			layout.Rigid(item),
+		)
 	})
 }
 
@@ -535,14 +531,12 @@ func (u *UI) layoutEntries(gtx C) D {
 	}
 	return layout.Stack{Alignment: layout.SE}.Layout(gtx,
 		layout.Expanded(func(gtx C) D {
-			dims := u.entryElastic.layout(gtx, &l.List, func(gtx C) D {
-				return material.List(u.th, l).Layout(gtx, len(u.entries)+1, func(gtx C, i int) D {
-					if i == len(u.entries) {
-						return layout.Spacer{Height: 48}.Layout(gtx)
-					}
-					gtx.Constraints.Min.X = gtx.Constraints.Max.X // so the scroll bar is at the pane's edge
-					return layout.Inset{Left: 28, Right: 28}.Layout(gtx, func(gtx C) D { return u.layoutEntry(gtx, i) })
-				})
+			dims := u.entryScroll.layout(gtx, u.th, l, len(u.entries)+1, func(gtx C, i int) D {
+				if i == len(u.entries) {
+					return layout.Spacer{Height: 48}.Layout(gtx)
+				}
+				gtx.Constraints.Min.X = gtx.Constraints.Max.X // so the scroll bar is at the pane's edge
+				return layout.Inset{Left: 28, Right: 28}.Layout(gtx, func(gtx C) D { return u.layoutEntry(gtx, i) })
 			})
 			if l.ScrollToEnd {
 				u.following = !l.Position.BeforeEnd

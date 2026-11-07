@@ -72,10 +72,10 @@ type UI struct {
 	sidebar   widget.List
 
 	// The columns' layout.
-	splitters      [2]splitter
-	sidebarElastic elastic
-	turnsElastic   elastic
-	entryElastic   elastic
+	splitters     [2]splitter
+	sidebarScroll scroller
+	turnsScroll   scroller
+	entryScroll   scroller
 
 	// The transcript pane.
 	turns      []session.TurnLog
