@@ -259,7 +259,8 @@ func (u *UI) layoutSidebar(gtx C) D {
 }
 
 // layoutControls lays out the Start and Stop buttons, how many rounds a
-// start runs, the session's state, and any problem.
+// start runs, the session's state, and any problem, with a button to make
+// the folder a git repository if it is not one.
 func (u *UI) layoutControls(gtx C) D {
 	active := u.active()
 	status, bad := u.statusText()
@@ -306,6 +307,13 @@ func (u *UI) layoutControls(gtx C) D {
 		children = append(children, layout.Rigid(u.text(14, muted, u.roundsText()).Layout), layout.Rigid(space(4)))
 	}
 	children = append(children, layout.Rigid(u.text(15, statusColor, status).Layout))
+	if u.folder != "" && !u.isRepo {
+		children = append(children, layout.Rigid(space(10)),
+			layout.Rigid(func(gtx C) D {
+				gtx.Constraints.Min.X = 0
+				return u.button(gtx, &u.initBtn, "Run git init", accent)
+			}))
+	}
 	for _, problem := range []string{u.message, errText(u.invalid)} {
 		if problem != "" {
 			children = append(children, layout.Rigid(space(6)), layout.Rigid(u.text(14, danger, problem).Layout))

@@ -69,6 +69,7 @@ type UI struct {
 	pattern   widget.Enum
 	rounds    widget.Editor
 	roles     map[backend.Role]*roleForm
+	initBtn   widget.Clickable
 	startBtn  widget.Clickable
 	stopBtn   widget.Clickable
 	sidebar   widget.List
@@ -384,6 +385,15 @@ func (u *UI) start() {
 	u.poll()
 }
 
+// initRepo makes the folder a git repository.
+func (u *UI) initRepo() {
+	u.message = ""
+	if err := git.Init(u.folder); err != nil {
+		u.message = "Could not run git init: " + err.Error()
+	}
+	u.isRepo = git.IsRepo(u.folder)
+}
+
 func (u *UI) stop() {
 	u.message = ""
 	if err := session.Stop(u.folder); err != nil {
@@ -569,6 +579,9 @@ func (u *UI) update(gtx layout.Context) {
 	if u.chooseBtn.Clicked(gtx) || u.ask {
 		u.ask = false
 		u.chooseFolder()
+	}
+	if u.initBtn.Clicked(gtx) {
+		u.initRepo()
 	}
 	if u.startBtn.Clicked(gtx) {
 		u.start()
