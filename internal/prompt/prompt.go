@@ -108,7 +108,6 @@ var defaults = map[string]*template.Template{
 	"evaluator":  load("evaluator"),
 	"archivist":  load("archivist"),
 	"standalone": load("standalone"),
-	"thinker":    load("thinker"),
 }
 
 func load(name string) *template.Template {

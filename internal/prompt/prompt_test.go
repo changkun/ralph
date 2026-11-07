@@ -22,7 +22,6 @@ func TestDefaults(t *testing.T) {
 		{"evaluator", []string{round.Folder, round.Objective, round.ExecutorResult}},
 		{"archivist", []string{round.Folder, round.Objective, round.ExecutorResult, round.EvaluatorResult, "AGENTS.md"}},
 		{"standalone", []string{round.Folder}},
-		{"thinker", []string{round.Folder, "ONE concrete, interesting idea"}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.role, func(t *testing.T) {

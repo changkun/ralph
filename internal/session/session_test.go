@@ -94,12 +94,12 @@ func TestValidate(t *testing.T) {
 		{"thinkers on host", func(s *Settings) { s.Pattern, s.Runtime = loop.Thinkers, Host }, "only in a container"},
 		{"no thinkers", func(s *Settings) { s.Pattern, s.Runtime, s.Thinkers = loop.Thinkers, "podman", 0 }, "from 1 to 20"},
 		{"too many thinkers", func(s *Settings) { s.Pattern, s.Runtime, s.Thinkers = loop.Thinkers, "podman", 21 }, "from 1 to 20"},
-		{"thinker template", func(s *Settings) {
+		{"thinkers template", func(s *Settings) {
 			s.Pattern, s.Runtime = loop.Thinkers, "podman"
-			a := s.Agents[backend.Thinker]
+			a := s.Agents[backend.Strategist]
 			a.Prompt = "{{.Nope}}"
-			s.Agents[backend.Thinker] = a
-		}, "thinker prompt"},
+			s.Agents[backend.Strategist] = a
+		}, "strategist prompt"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

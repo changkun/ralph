@@ -17,12 +17,13 @@ import (
 	"github.com/changkun/ralph/internal/sandbox"
 )
 
-// In the thinkers pattern, thinkers run side by side, each once, in a new
-// empty folder of its own, thinkerN in the project folder, and in a sandbox
-// that sees only that folder. None knows of the others. Their transcripts
-// and final answers go in LogDir as thinkerN.jsonl and thinkerN.json, out
-// of every thinker's sight. Each start runs more thinkers, numbered after
-// those before.
+// The thinkers pattern runs only the strategist of think+act, with its
+// settings and prompt, as thinkers side by side. Each runs once, in a new
+// empty folder of its own, thinkerN in the project folder, and in a
+// sandbox that sees only that folder, read-only as the strategist always
+// does. None knows of the others. Their transcripts and final answers go
+// in LogDir as thinkerN.jsonl and thinkerN.json, out of every thinker's
+// sight. Each start runs more thinkers, numbered after those before.
 
 // DefaultThinkers is how many thinkers a start runs by default, and
 // MaxThinkers how many it can run.
@@ -50,11 +51,11 @@ type thinkerResult struct {
 // an error if any of them failed, once all have finished.
 func runThinkers(ctx context.Context, folder string, s Settings, st *Status, update func(), out io.Writer) error {
 	out = &syncWriter{w: out}
-	a := s.Agents[backend.Thinker]
-	tmpl, _ := a.template(backend.Thinker) // checked by Validate
+	a := s.Agents[backend.Strategist]
+	tmpl, _ := a.template(backend.Strategist) // checked by Validate
 	p, err := tmpl.Render(prompt.Round{Folder: sandbox.Workdir})
 	if err != nil {
-		return fmt.Errorf("%s: %w", backend.Thinker, err)
+		return fmt.Errorf("%s: %w", backend.Strategist, err)
 	}
 	o, err := s.sandboxOptions(folder, out)
 	if err != nil {
@@ -74,7 +75,7 @@ func runThinkers(ctx context.Context, folder string, s Settings, st *Status, upd
 	if model == "" {
 		model = "default model"
 	}
-	fmt.Fprintf(out, "=== Ralph thinkers starting ===\nFolder: %s\nRuntime: %s\nThinkers %d to %d: %s (%s)\n\n",
+	fmt.Fprintf(out, "=== Ralph thinkers starting ===\nFolder: %s\nRuntime: %s\nThinkers %d to %d, each a strategist alone: %s (%s)\n\n",
 		folder, s.Runtime, first, first+s.Thinkers-1, a.Backend, model)
 	// The sandboxes start side by side, so the image is built first, once.
 	if err := sandbox.EnsureImage(ctx, s.Runtime, out); err != nil {
@@ -107,9 +108,9 @@ func runThinkers(ctx context.Context, folder string, s Settings, st *Status, upd
 	return nil
 }
 
-// runThinker runs thinker n with prompt p in a sandbox like o that sees
-// only the thinker's folder, and saves its transcript and its final answer
-// or failure. A thinker that is stopped saves neither.
+// runThinker runs thinker n, a strategist with prompt p, in a sandbox like
+// o that sees only the thinker's folder, and saves its transcript and its
+// final answer or failure. A thinker that is stopped saves neither.
 func runThinker(ctx context.Context, folder string, n int, o sandbox.Options, a Agent, p prompt.Prompt, out io.Writer) (err error) {
 	name := ThinkerFolder(n)
 	// The transcript exists from the start, so that the thinker is listed
@@ -146,7 +147,7 @@ func runThinker(ctx context.Context, folder string, n int, o sandbox.Options, a 
 	defer sb.Close()
 	fmt.Fprintf(out, "[%s] Thinking.\n", name)
 	result, err = backend.New(a.Backend, sb).Run(ctx, backend.Turn{
-		Role:       backend.Thinker,
+		Role:       backend.Strategist, // so it cannot change its folder
 		Folder:     sandbox.Workdir,
 		Model:      a.Model,
 		Prompt:     p,
@@ -203,7 +204,7 @@ func ThinkerLogs(folder string) []TurnLog {
 	slices.Sort(nums)
 	turns := make([]TurnLog, len(nums))
 	for i, n := range nums {
-		t := TurnLog{Round: n, Role: backend.Thinker, Path: thinkerLog(folder, n, ".jsonl")}
+		t := TurnLog{Round: n, Role: backend.Strategist, Thinker: true, Path: thinkerLog(folder, n, ".jsonl")}
 		if data, err := os.ReadFile(thinkerLog(folder, n, ".json")); err == nil {
 			var r thinkerResult
 			if json.Unmarshal(data, &r) == nil {

@@ -57,7 +57,6 @@ var roleColors = map[backend.Role]color.NRGBA{
 	backend.Executor:   rgb(0x1264a3),
 	backend.Evaluator:  rgb(0x007a5a),
 	backend.Archivist:  rgb(0xa0522d),
-	backend.Thinker:    rgb(0xb83280),
 }
 
 const (
@@ -370,7 +369,7 @@ func (u *UI) layoutLogins(gtx C) D {
 	}
 	where := "Agents run in a new container that sees only the project folder."
 	if u.thinking() {
-		where = "Each thinker runs in a new container that sees only its own folder."
+		where = "Each thinker runs in a new container that sees only its own empty folder, read-only."
 	}
 	children := []layout.FlexChild{layout.Rigid(u.text(14, muted, where).Layout)}
 	for _, l := range u.logins {
@@ -458,10 +457,10 @@ func (u *UI) layoutTurns(gtx C) D {
 		item := func(gtx C) D { return u.layoutTurnItem(gtx, i, turnTitle(t), mark, markColor, roleColors[t.Role]) }
 		// Turns are grouped by round, and thinkers all together.
 		group := fmt.Sprintf("Round %d", t.Round)
-		if t.Role == backend.Thinker {
+		if t.Thinker {
 			group = "Thinkers"
 		}
-		if i > firstTurnView && (t.Role == backend.Thinker || u.turns[i-firstTurnView-1].Round == t.Round) {
+		if i > firstTurnView && (t.Thinker || u.turns[i-firstTurnView-1].Round == t.Round) {
 			return item(gtx)
 		}
 		return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
@@ -645,7 +644,7 @@ func (u *UI) layoutConsoleLine(gtx C, e entry) D {
 
 // turnTitle names a turn by its role, or a thinker by its number.
 func turnTitle(t session.TurnLog) string {
-	if t.Role == backend.Thinker {
+	if t.Thinker {
 		return fmt.Sprintf("Thinker %d", t.Round)
 	}
 	return roleTitle(t.Role)
@@ -661,7 +660,7 @@ func (u *UI) turnSubtitle(t session.TurnLog) string {
 	case !ok:
 		state = "did not finish"
 	}
-	if t.Role == backend.Thinker {
+	if t.Thinker {
 		return upperFirst(state)
 	}
 	return fmt.Sprintf("Round %d · %s", t.Round, state)
@@ -684,7 +683,7 @@ func (u *UI) layoutTurnHeading(gtx C, t session.TurnLog) D {
 			gtx.Constraints = layout.Exact(image.Pt(size, size))
 			defer clip.UniformRRect(image.Rectangle{Max: image.Pt(size, size)}, gtx.Dp(7)).Push(gtx.Ops).Pop()
 			paint.Fill(gtx.Ops, roleColors[t.Role])
-			return layout.Center.Layout(gtx, u.bold(16, white, strings.ToUpper(string(t.Role)[:1])).Layout)
+			return layout.Center.Layout(gtx, u.bold(16, white, turnTitle(t)[:1]).Layout)
 		}),
 		layout.Rigid(space(12)),
 		layout.Rigid(u.bold(15, ink, turnTitle(t)).Layout),
