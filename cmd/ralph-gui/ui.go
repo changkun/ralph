@@ -128,6 +128,8 @@ type entry struct {
 	event transcript.Event
 	text  string
 	bad   bool
+	first bool // for a console line, whether it is the first or last
+	last  bool
 	key   string // identifies an event, to remember whether it is expanded
 }
 
@@ -456,7 +458,14 @@ func (u *UI) consoleEntries(n int) []entry {
 	if n > 0 && len(lines) > n {
 		lines = lines[len(lines)-n:]
 	}
-	return []entry{{kind: entryConsole, text: strings.Join(lines, "\n")}}
+	es := make([]entry, len(lines))
+	for i, line := range lines {
+		if line == "" {
+			line = " " // an empty label would have no height
+		}
+		es[i] = entry{kind: entryConsole, text: line, first: i == 0, last: i == len(lines)-1}
+	}
+	return es
 }
 
 // turnEntries returns a turn's heading and events.

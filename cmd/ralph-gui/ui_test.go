@@ -218,7 +218,7 @@ func TestViews(t *testing.T) {
 	// The console shows the engine's output.
 	u.showView(viewConsole)
 	u.poll()
-	if k := kinds(u.entries); k != "C" || !strings.Contains(u.entries[0].text, "Ralph loop starting") {
+	if k := kinds(u.entries); k != "CC" || !strings.Contains(u.entries[0].text, "Ralph loop starting") {
 		t.Errorf("console entries = %s %+v", k, u.entries)
 	}
 	frame(t, u)
@@ -290,25 +290,29 @@ func TestFollow(t *testing.T) {
 	u := newUI(nil, folder)
 	u.showView(viewConsole)
 	u.poll()
+	if len(u.entries) != 400 || !u.entries[0].first || !u.entries[399].last {
+		t.Fatalf("console entries = %d; want one per line", len(u.entries))
+	}
 	// Lists learn their scroll range in a frame for the events after it.
 	now := time.Now()
 	for range 3 {
 		frameAt(t, u, now)
 	}
 	l := &u.entryList
-	if !u.following || l.Position.BeforeEnd || l.Position.Offset == 0 {
+	atTop := func() bool { return l.Position.First == 0 && l.Position.Offset == 0 }
+	if !u.following || l.Position.BeforeEnd || atTop() {
 		t.Fatalf("following = %v, position = %+v; want the end", u.following, l.Position)
 	}
 	screenshot(t, u, "follow")
 
 	// The view stays at the end as the session prints more.
-	offset := l.Position.Offset
+	first := l.Position.First
 	log.WriteString("more\nand more\n")
 	write(t, filepath.Join(folder, session.LocalDir, "engine.log"), log.String())
 	u.poll()
 	frameAt(t, u, now)
-	if !u.following || l.Position.BeforeEnd || l.Position.Offset <= offset {
-		t.Errorf("following = %v, position = %+v; want the new end, past %d", u.following, l.Position, offset)
+	if !u.following || l.Position.BeforeEnd || l.Position.First <= first {
+		t.Errorf("following = %v, position = %+v; want the new end, past line %d", u.following, l.Position, first)
 	}
 
 	// Scrolling up stops following.
@@ -345,7 +349,7 @@ func TestFollow(t *testing.T) {
 	for range 2 {
 		frame(t, u)
 	}
-	if l.ScrollToEnd || l.Position.Offset != 0 {
+	if l.ScrollToEnd || !atTop() {
 		t.Errorf("scroll to end = %v, position = %+v; want the top", l.ScrollToEnd, l.Position)
 	}
 
@@ -355,7 +359,7 @@ func TestFollow(t *testing.T) {
 	for range 2 {
 		frame(t, u)
 	}
-	if !u.following || l.Position.BeforeEnd || l.Position.Offset == 0 {
+	if !u.following || l.Position.BeforeEnd || atTop() {
 		t.Errorf("following = %v, position = %+v; want the end", u.following, l.Position)
 	}
 	write(t, filepath.Join(folder, session.LocalDir, "engine.log"), "one line\n")
