@@ -157,6 +157,7 @@ func newUI(w *app.Window, folder string) *UI {
 	u.sidebar.Axis = layout.Vertical
 	u.turnList.Axis = layout.Vertical
 	u.entryList.Axis = layout.Vertical
+	u.entryScroll.measureAll = true // its entries vary most in height
 	u.markdownOn.Value = !u.prefs.PlainText
 	for _, role := range session.Roles {
 		f := &roleForm{}

@@ -105,9 +105,10 @@ type scroller struct {
 	// constraints and width the list lays them out with. The indicator's
 	// place comes from these, rather than from the heights of the
 	// elements in view, which vary too much for it to hold still.
-	sizes []int
-	cs    layout.Constraints
-	width int
+	sizes      []int
+	cs         layout.Constraints
+	width      int
+	measureAll bool // whether to measure elements out of view too, not only those it has shown
 }
 
 // scrollKind is what scrolls a list.
@@ -204,10 +205,10 @@ func (s *scroller) forget() {
 }
 
 // measure measures elements out of view that are not yet measured, for a
-// while each frame.
+// while each frame, if s measures all its elements.
 func (s *scroller) measure(gtx C, el layout.ListElement) {
-	if s.cs == (layout.Constraints{}) {
-		return // the list has laid nothing out to measure with
+	if !s.measureAll || s.cs == (layout.Constraints{}) {
+		return // or the list has laid nothing out to measure with
 	}
 	start := time.Now()
 	gtx.Constraints = s.cs
