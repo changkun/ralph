@@ -18,6 +18,7 @@ import (
 	"gioui.org/x/explorer"
 
 	"github.com/changkun/ralph/internal/backend"
+	"github.com/changkun/ralph/internal/git"
 	"github.com/changkun/ralph/internal/loop"
 	"github.com/changkun/ralph/internal/session"
 	"github.com/changkun/ralph/internal/transcript"
@@ -44,6 +45,7 @@ type UI struct {
 	prefs prefs
 
 	folder      string
+	isRepo      bool             // whether the folder is in a git repository
 	settings    session.Settings // as the form shows them
 	saved       session.Settings // as last loaded or saved
 	invalid     error            // why settings cannot be used, if they cannot
@@ -288,6 +290,7 @@ func (u *UI) openFolder(dir string) {
 	u.setSettings(s)
 	u.saved = s
 	u.launchedPID = 0
+	u.isRepo = false
 	u.showView(viewLive)
 	u.entries = nil
 	clear(u.cache)
@@ -333,6 +336,12 @@ func (u *UI) start() {
 	u.message = ""
 	if u.folder == "" {
 		u.message = "Choose a project folder first."
+		return
+	}
+	// Ralph commits the folder after each round, but it does not make it
+	// a repository unasked.
+	if u.isRepo = git.IsRepo(u.folder); !u.isRepo {
+		u.message = notRepo
 		return
 	}
 	if u.invalid != nil {
@@ -383,6 +392,9 @@ func (u *UI) poll() {
 	u.lastPoll = time.Now()
 	if u.folder == "" {
 		return
+	}
+	if !u.isRepo {
+		u.isRepo = git.IsRepo(u.folder) // until the user runs git init
 	}
 	st, err := session.ReadStatus(u.folder)
 	u.status, u.hasStatus = st, err == nil
@@ -576,6 +588,9 @@ func (u *UI) statusText() (string, bool) {
 	if u.folder == "" {
 		return "Choose a project folder to begin.", false
 	}
+	if !u.isRepo {
+		return notRepo, true
+	}
 	if u.launchedPID != 0 {
 		if session.Alive(u.launchedPID) {
 			return "Starting…", false
@@ -610,6 +625,8 @@ func (u *UI) statusText() (string, bool) {
 	}
 	return "", false
 }
+
+const notRepo = "This folder is not a git repository. Run git init in it first."
 
 var roleInfo = map[backend.Role]string{
 	backend.Standalone: "Plans and does the work alone.",
