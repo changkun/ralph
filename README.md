@@ -91,9 +91,13 @@ On Linux, Podman maps your user to the agents' user, so files they create belong
 2. Choose where agents run (Podman, Docker, or this machine) and the pattern.
 3. For each role in the pattern, choose Claude Code or Codex and a model, and edit its system prompt and prompt if you like. Prompts are Go templates; Reset restores the built-in ones.
 4. Press Start, after setting how many rounds it runs if you like; left empty, the session runs until you stop it. Once rounds have finished, the button reads Continue and runs that many more. The app checks the settings and logins, then runs the session in a background process, so it keeps running if you quit the app; open the folder again to follow it. Stop ends it.
-5. Watch each turn: the app lists the rounds and turns, and shows the selected turn's messages, reasoning, tool calls, commands, and results as they happen. With *Follow the session* checked, it moves to each new turn by itself. The engine log shows the session's console output, including the first image build and any error.
+5. Watch the agents work. The Live view, shown first, follows the session: the turns of the latest ten rounds, one after another, with each agent's messages, reasoning, tool calls, commands, and results as they happen. It stays at the newest output until you scroll up; *Jump to latest* returns there. Console shows the session's own output, including the first image build and any error, and choosing a turn in the middle column shows that turn alone.
 
-The app keeps its files in the project's `.ralph/local/`: the settings (`config.json`, leaving out prompts equal to the built-in ones), the session's state (`status.json`), and the engine log (`engine.log`). Agents in a container cannot see this folder, which is replaced by an empty one in their view, and Ralph never commits it.
+Agents' Markdown is shown formatted; uncheck *Format Markdown* to see it as written. Long tool output shows its first lines until you expand it. Drag the handles between the columns to resize them.
+
+The app keeps a project's files in its `.ralph/local/`: the settings (`config.json`, leaving out prompts equal to the built-in ones), the session's state (`status.json`), and the console output (`engine.log`). Agents in a container cannot see this folder, which is replaced by an empty one in their view, and Ralph never commits it. The app's own preferences (the column widths, the Markdown choice, and the last folder, which it reopens) are in `ralph/gui.json` in your user config folder.
+
+The app sets its text in [Lato](https://www.latofonts.com) and code in [DejaVu Sans Mono](https://dejavu-fonts.github.io), both embedded; their licenses are in `cmd/ralph-gui/fonts/`.
 
 > [!NOTE]
 > Start the app from a terminal, so that it sees the API keys set in your shell. An app opened from the macOS Finder does not.
