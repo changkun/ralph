@@ -63,15 +63,6 @@ func TestNew(t *testing.T) {
 	}
 }
 
-func TestMemoryFile(t *testing.T) {
-	if got := (&Claude{}).MemoryFile(); got != "CLAUDE.md" {
-		t.Errorf("Claude memory file = %q", got)
-	}
-	if got := (&Codex{}).MemoryFile(); got != "AGENTS.md" {
-		t.Errorf("Codex memory file = %q", got)
-	}
-}
-
 func TestRunError(t *testing.T) {
 	base := errors.New("exit status 1")
 	// stderr returns the error of a command that writes s to stderr and exits 3.

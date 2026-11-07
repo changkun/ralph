@@ -11,7 +11,6 @@ var round = Round{
 	Objective:       "add feature X",
 	ExecutorResult:  "added feature X",
 	EvaluatorResult: "tests passed",
-	MemoryFile:      "CLAUDE.md",
 }
 
 func TestPrompts(t *testing.T) {
@@ -24,7 +23,7 @@ func TestPrompts(t *testing.T) {
 		{"strategist", Strategist(), true, []string{"ONE objective"}},
 		{"executor", Executor(round), true, []string{round.Folder, round.Objective}},
 		{"evaluator", Evaluator(round), true, []string{round.Folder, round.Objective, round.ExecutorResult}},
-		{"archivist", Archivist(round), true, []string{round.Folder, round.Objective, round.ExecutorResult, round.EvaluatorResult, round.MemoryFile}},
+		{"archivist", Archivist(round), true, []string{round.Folder, round.Objective, round.ExecutorResult, round.EvaluatorResult, "AGENTS.md"}},
 		{"standalone", Standalone(round.Folder), true, []string{round.Folder}},
 	}
 	for _, tt := range tests {

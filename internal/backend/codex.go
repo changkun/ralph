@@ -48,6 +48,3 @@ func (*Codex) Run(ctx context.Context, role Role, folder string, p prompt.Prompt
 	}
 	return json.Marshal(Result{Value: string(text)})
 }
-
-// MemoryFile implements Backend.
-func (*Codex) MemoryFile() string { return "AGENTS.md" }

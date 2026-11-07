@@ -12,7 +12,7 @@ Ralph has four agent roles:
 - **Strategist** proposes exactly one next objective. It only reasons, so it can only read the project: Claude Code gets just the Read, Glob, and Grep tools and no MCP servers, and Codex runs in its `read-only` sandbox.
 - **Executor** implements that objective.
 - **Evaluator** verifies the round without becoming a planner.
-- **Archivist** observes the round and records durable knowledge in the backend's memory file (`CLAUDE.md` for Claude Code, `AGENTS.md` for Codex) and in the project documentation.
+- **Archivist** observes the round and records durable knowledge in `AGENTS.md`, which Claude Code and Codex both read, and in the project documentation.
 
 A pattern selects which roles run in each round:
 

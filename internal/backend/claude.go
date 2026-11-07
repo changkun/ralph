@@ -37,6 +37,3 @@ func (*Claude) Run(ctx context.Context, role Role, folder string, p prompt.Promp
 	}
 	return out, nil
 }
-
-// MemoryFile implements Backend.
-func (*Claude) MemoryFile() string { return "CLAUDE.md" }
