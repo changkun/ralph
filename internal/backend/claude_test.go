@@ -35,6 +35,28 @@ func TestClaudeRunNoSystemPrompt(t *testing.T) {
 	assertArgs(t, args(), []string{"-p", "--output-format", "json", "--dangerously-skip-permissions", "task"})
 }
 
+func TestClaudeRunStrategistReadOnly(t *testing.T) {
+	tests := []struct {
+		p    prompt.Prompt
+		want []string
+	}{
+		{prompt.Prompt{User: "task"}, []string{
+			"-p", "--output-format", "json", "--tools", "Read,Glob,Grep", "--strict-mcp-config", "task",
+		}},
+		{prompt.Prompt{System: "sys", User: "task"}, []string{
+			"-p", "--output-format", "json", "--tools", "Read,Glob,Grep", "--strict-mcp-config",
+			"--append-system-prompt", "sys", "task",
+		}},
+	}
+	for _, tt := range tests {
+		args := fakeCLI(t, "claude", `echo '{"result":"ok"}'`)
+		if _, err := (&Claude{}).Run(context.Background(), Strategist, t.TempDir(), tt.p); err != nil {
+			t.Fatal(err)
+		}
+		assertArgs(t, args(), tt.want)
+	}
+}
+
 func TestClaudeRunFailure(t *testing.T) {
 	fakeCLI(t, "claude", `echo '{"result":"Not logged in"}'; exit 1`)
 	_, err := (&Claude{}).Run(context.Background(), Executor, t.TempDir(), prompt.Prompt{User: "task"})

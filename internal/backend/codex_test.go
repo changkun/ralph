@@ -28,7 +28,7 @@ func TestCodexRun(t *testing.T) {
 		want []string
 	}{
 		{Strategist, prompt.Prompt{User: "task"},
-			[]string{"exec", "--sandbox", "workspace-write", "--ephemeral", "-C", "/project", "-o", "<out>", "task"}},
+			[]string{"exec", "--sandbox", "read-only", "--ephemeral", "-C", "/project", "-o", "<out>", "task"}},
 		{Executor, prompt.Prompt{System: "sys", User: "task"},
 			[]string{"exec", "--sandbox", "workspace-write", "-C", "/project", "-o", "<out>", "sys\n\ntask"}},
 		{Archivist, prompt.Prompt{User: "task"},

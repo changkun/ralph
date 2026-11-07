@@ -27,6 +27,10 @@ const (
 	Standalone Role = "standalone"
 )
 
+// readOnly reports whether role only reasons about the project and so must
+// not be able to change it. Only the strategist is read-only.
+func (r Role) readOnly() bool { return r == Strategist }
+
 // Backend runs one agent turn at a time.
 type Backend interface {
 	// Run runs one turn of role in folder and returns JSON whose "result"
