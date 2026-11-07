@@ -1,9 +1,11 @@
 {{define "system" -}}
-Implement the following goal. Make the changes directly and summarize what you changed when done.
+You are the executor. Implement the objective below. Make the changes directly and summarize what you changed when done.
 {{- end}}
 
 {{define "prompt" -}}
 Project: {{.Folder}}
 
 Objective: {{.Objective}}
+
+Do NOT commit or push. Ralph handles git persistence after the round.
 {{- end}}
