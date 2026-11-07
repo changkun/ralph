@@ -1,10 +1,12 @@
 // Command ralph runs Claude Code or OpenAI Codex in an autonomous loop on a
-// project folder, committing the project after every round.
+// project folder, committing the project after every round. With the
+// thinkers pattern, it instead runs thinkers side by side, each alone in an
+// empty folder of its own.
 //
 // Usage:
 //
 //	ralph [--runtime host|podman|docker] [--backend claude|codex] [--model NAME]
-//	      [--pattern NAME] [--rounds N] <folder>
+//	      [--pattern NAME] [--rounds N] [--thinkers N] <folder>
 //
 // Run ralph --help for the list of patterns. The ralph-gui command offers
 // the same with per-role settings and a live view of the agents' work.
@@ -30,6 +32,8 @@ import (
 const usage = `Usage: ralph [options] <folder>
 
 Runs coding agents in rounds on <folder>, committing it after each round.
+With --pattern thinkers, it instead runs thinkers side by side, each once,
+alone in a new empty folder in <folder> and a container of its own.
 
 Options:
   --runtime host|podman|docker
@@ -39,9 +43,12 @@ Options:
   --model NAME             model for every role (default: the CLI's default)
   --pattern NAME           roles in each round (default think+act); one of
                            standalone, think+act, think+act+evaluator,
-                           think+act+evaluator+archivist
+                           think+act+evaluator+archivist; or thinkers, which
+                           needs --runtime podman or docker
   --rounds N               run N rounds after those already finished, then
                            stop; 0 means no limit (default 0)
+  --thinkers N             with --pattern thinkers, run N thinkers, numbered
+                           after those already run, from 1 to 20 (default 3)
   -h, --help               show this help
 `
 
@@ -54,11 +61,12 @@ type config struct {
 	model       string
 	pattern     loop.Pattern
 	rounds      int
+	thinkers    int
 	folder      string
 }
 
 func parseArgs(args []string) (config, error) {
-	cfg := config{runtime: session.Host, backendName: "claude", pattern: loop.ThinkAct}
+	cfg := config{runtime: session.Host, backendName: "claude", pattern: loop.ThinkAct, thinkers: session.DefaultThinkers}
 	for len(args) > 0 {
 		arg := args[0]
 		args = args[1:]
@@ -72,7 +80,7 @@ func parseArgs(args []string) (config, error) {
 			cfg.folder = arg
 			continue
 		}
-		if !slices.Contains([]string{"--runtime", "--backend", "--model", "--pattern", "--rounds"}, arg) {
+		if !slices.Contains([]string{"--runtime", "--backend", "--model", "--pattern", "--rounds", "--thinkers"}, arg) {
 			return cfg, fmt.Errorf("unknown option %s", arg)
 		}
 		if len(args) == 0 {
@@ -105,10 +113,19 @@ func parseArgs(args []string) (config, error) {
 				return cfg, fmt.Errorf("--rounds must be a non-negative integer, got %q", value)
 			}
 			cfg.rounds = n
+		case "--thinkers":
+			n, err := strconv.Atoi(value)
+			if err != nil || n < 1 || n > session.MaxThinkers {
+				return cfg, fmt.Errorf("--thinkers must be from 1 to %d, got %q", session.MaxThinkers, value)
+			}
+			cfg.thinkers = n
 		}
 	}
 	if cfg.folder == "" {
 		return cfg, errors.New("folder is required")
+	}
+	if cfg.pattern == loop.Thinkers && cfg.runtime == session.Host {
+		return cfg, errors.New("--pattern thinkers needs --runtime podman or docker: each thinker sees nothing but its own folder, which only a container ensures")
 	}
 	var err error
 	cfg.folder, err = filepath.Abs(cfg.folder)
@@ -120,6 +137,7 @@ func run(ctx context.Context, cfg config) error {
 	s.Runtime = cfg.runtime
 	s.Pattern = cfg.pattern
 	s.Rounds = cfg.rounds
+	s.Thinkers = cfg.thinkers
 	for role, a := range s.Agents {
 		a.Backend, a.Model = cfg.backendName, cfg.model
 		s.Agents[role] = a
