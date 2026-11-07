@@ -702,6 +702,16 @@ func TestStartNeedsRepo(t *testing.T) {
 	if s, bad := u.statusText(); bad || !u.isRepo {
 		t.Errorf("status = %q, repo = %v", s, u.isRepo)
 	}
+
+	// So is pressing Run git init.
+	folder = t.TempDir()
+	u.openFolder(folder)
+	frame(t, u)
+	u.initBtn.Click()
+	frame(t, u)
+	if s, bad := u.statusText(); bad || !u.isRepo || !git.IsRepo(folder) {
+		t.Errorf("status = %q, repo = %v, %v", s, u.isRepo, git.IsRepo(folder))
+	}
 }
 
 func TestOpenFolder(t *testing.T) {
