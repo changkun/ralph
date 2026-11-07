@@ -38,8 +38,13 @@ const (
 // then Host.
 var Runtimes = append(slices.Clone(sandbox.Runtimes), Host)
 
-// Roles lists every role, in the order they run in a round.
-var Roles = []backend.Role{backend.Standalone, backend.Strategist, backend.Executor, backend.Evaluator, backend.Archivist}
+// Patterns lists the patterns a session can run: those that run in rounds,
+// then loop.Thinkers.
+var Patterns = append(slices.Clone(loop.Patterns), loop.Thinkers)
+
+// Roles lists every role, in the order they run in a round, then the
+// thinker.
+var Roles = []backend.Role{backend.Standalone, backend.Strategist, backend.Executor, backend.Evaluator, backend.Archivist, backend.Thinker}
 
 // Agent configures the agent for one role.
 type Agent struct {
@@ -57,17 +62,18 @@ func DefaultAgent(role backend.Role) Agent {
 
 // Settings configures a session.
 type Settings struct {
-	Pattern loop.Pattern
-	Runtime string // one of Runtimes
-	Rounds  int    // rounds to run each time the session starts; 0 means no limit
-	Agents  map[backend.Role]Agent
+	Pattern  loop.Pattern // one of Patterns
+	Runtime  string       // one of Runtimes
+	Rounds   int          // rounds to run each time the session starts; 0 means no limit
+	Thinkers int          // in the thinkers pattern, thinkers to run each time
+	Agents   map[backend.Role]Agent
 }
 
 // Defaults returns the default settings: the think+act pattern, the first
 // installed container runtime, and Claude with the built-in prompts for
 // every role.
 func Defaults() Settings {
-	s := Settings{Pattern: loop.ThinkAct, Runtime: sandbox.Detect(), Agents: map[backend.Role]Agent{}}
+	s := Settings{Pattern: loop.ThinkAct, Runtime: sandbox.Detect(), Thinkers: DefaultThinkers, Agents: map[backend.Role]Agent{}}
 	if s.Runtime == "" {
 		s.Runtime = sandbox.Runtimes[0]
 	}
@@ -79,7 +85,7 @@ func Defaults() Settings {
 
 // Validate reports the first problem with s, if any.
 func (s Settings) Validate() error {
-	if !slices.Contains(loop.Patterns, s.Pattern) {
+	if !slices.Contains(Patterns, s.Pattern) {
 		return fmt.Errorf("unknown pattern %q", s.Pattern)
 	}
 	if !slices.Contains(Runtimes, s.Runtime) {
@@ -87,6 +93,14 @@ func (s Settings) Validate() error {
 	}
 	if s.Rounds < 0 {
 		return errors.New("the number of rounds cannot be negative")
+	}
+	if s.Pattern == loop.Thinkers {
+		if s.Runtime == Host {
+			return errors.New("thinkers run only in a container, where each sees nothing but its own folder")
+		}
+		if s.Thinkers < 1 || s.Thinkers > MaxThinkers {
+			return fmt.Errorf("the number of thinkers must be from 1 to %d", MaxThinkers)
+		}
 	}
 	for _, role := range s.Pattern.Roles() {
 		if _, err := s.Agents[role].template(role); err != nil {
@@ -110,10 +124,11 @@ func (a Agent) template(role backend.Role) (*prompt.Template, error) {
 // file is how Settings are saved. Prompts equal to the built-in ones are
 // left out, so that they follow changes to the built-in prompts.
 type file struct {
-	Pattern loop.Pattern               `json:"pattern"`
-	Runtime string                     `json:"runtime"`
-	Rounds  int                        `json:"rounds,omitempty"`
-	Agents  map[backend.Role]fileAgent `json:"agents"`
+	Pattern  loop.Pattern               `json:"pattern"`
+	Runtime  string                     `json:"runtime"`
+	Rounds   int                        `json:"rounds,omitempty"`
+	Thinkers int                        `json:"thinkers,omitempty"`
+	Agents   map[backend.Role]fileAgent `json:"agents"`
 }
 
 type fileAgent struct {
@@ -147,6 +162,9 @@ func Load(folder string) (Settings, error) {
 		s.Runtime = f.Runtime
 	}
 	s.Rounds = f.Rounds
+	if f.Thinkers != 0 {
+		s.Thinkers = f.Thinkers
+	}
 	for role, fa := range f.Agents {
 		a, ok := s.Agents[role]
 		if !ok {
@@ -169,7 +187,7 @@ func Load(folder string) (Settings, error) {
 
 // Save saves s in folder.
 func (s Settings) Save(folder string) error {
-	f := file{Pattern: s.Pattern, Runtime: s.Runtime, Rounds: s.Rounds, Agents: map[backend.Role]fileAgent{}}
+	f := file{Pattern: s.Pattern, Runtime: s.Runtime, Rounds: s.Rounds, Thinkers: s.Thinkers, Agents: map[backend.Role]fileAgent{}}
 	for role, a := range s.Agents {
 		def := DefaultAgent(role)
 		fa := fileAgent{Backend: a.Backend, Model: a.Model}
@@ -318,6 +336,10 @@ type Status struct {
 	Role    backend.Role `json:"role,omitempty"`  // the role in progress
 	Error   string       `json:"error,omitempty"` // why the session failed
 	Time    time.Time    `json:"time"`            // when the status last changed
+
+	// Thinkers numbers the thinkers the session runs, in the thinkers
+	// pattern.
+	Thinkers []int `json:"thinkers,omitempty"`
 }
 
 func statusPath(folder string) string { return filepath.Join(folder, LocalDir, "status.json") }
@@ -347,6 +369,10 @@ func (st Status) Active() bool {
 // Run makes folder a git repository if it is not one, and runs the agents
 // in a sandbox unless s.Runtime is Host. It refuses to run while another
 // session on folder is active.
+//
+// In the thinkers pattern, Run instead runs s.Thinkers thinkers side by
+// side until they finish, each in a folder and sandbox of its own (see
+// runThinkers), and leaves folder as it is otherwise.
 func Run(ctx context.Context, folder string, s Settings, out io.Writer) (err error) {
 	if err := s.Validate(); err != nil {
 		return err
@@ -386,6 +412,9 @@ func Run(ctx context.Context, folder string, s Settings, out io.Writer) (err err
 		}
 		update()
 	}()
+	if s.Pattern == loop.Thinkers {
+		return runThinkers(ctx, folder, s, &st, update, out)
+	}
 
 	if err := git.Init(folder); err != nil {
 		return err
@@ -468,10 +497,13 @@ func Stop(folder string) error {
 
 // TurnLog is the transcript of one turn.
 type TurnLog struct {
-	Round int
+	Round int // the round, or a thinker's number
 	Role  backend.Role
 	Path  string // the transcript file
 	Done  bool   // whether the turn finished and saved its result
+
+	// For a thinker: its final answer once it is done, or why it failed.
+	Result, Error string
 }
 
 // Turns lists the turn transcripts in folder's round logs, in the order
