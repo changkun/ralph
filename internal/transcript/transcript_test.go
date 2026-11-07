@@ -165,3 +165,13 @@ func TestReadFile(t *testing.T) {
 		t.Error("ReadFile of a missing file succeeded")
 	}
 }
+
+func TestIndent(t *testing.T) {
+	got := indent([]byte(`{"command":"a > b && c"}`))
+	if want := "{\n  \"command\": \"a > b && c\"\n}"; got != want {
+		t.Errorf("indent = %q, want %q", got, want)
+	}
+	if got := indent([]byte(`not json`)); got != "not json" {
+		t.Errorf("indent of invalid JSON = %q", got)
+	}
+}
