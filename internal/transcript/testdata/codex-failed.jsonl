@@ -1,0 +1,4 @@
+{"type":"thread.started","thread_id":"01a1b551-d6c5-71a3-ae21-495744a96bf4"}
+{"type":"turn.started"}
+{"type":"error","message":"The model is not supported when using Codex with a ChatGPT account."}
+{"type":"turn.failed","error":{"message":"The model is not supported when using Codex with a ChatGPT account."}}
