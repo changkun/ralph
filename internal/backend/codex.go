@@ -26,7 +26,9 @@ func codexExec(ctx context.Context, folder string, p prompt.Prompt, extra ...str
 		fullPrompt = p.System + "\n\n" + p.User
 	}
 
-	args := []string{"exec", "--full-auto"}
+	// workspace-write lets the agent edit files in folder. It replaces
+	// --full-auto, which current codex releases reject.
+	args := []string{"exec", "--sandbox", "workspace-write"}
 	args = append(args, extra...)
 	args = append(args, "-C", folder, "-o", path, fullPrompt)
 

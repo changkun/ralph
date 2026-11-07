@@ -2,6 +2,9 @@ package backend
 
 import (
 	"context"
+	"os"
+	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -92,5 +95,38 @@ func TestCodexNoSystem(t *testing.T) {
 	}
 	if r := ExtractResult(raw); r != "output\n" {
 		t.Errorf("got %q", r)
+	}
+}
+
+func TestCodexArgs(t *testing.T) {
+	tests := []struct {
+		name string
+		run  func(*Codex) ([]byte, error)
+		want []string
+	}{
+		{"thinker", func(c *Codex) ([]byte, error) { return c.RunThinker(context.Background(), "/project", testPrompt) },
+			[]string{"exec", "--sandbox", "workspace-write", "--ephemeral", "-C", "/project", "-o", "<out>", "sys\n\ntest"}},
+		{"worker", func(c *Codex) ([]byte, error) { return c.RunWorker(context.Background(), "/project", testPrompt) },
+			[]string{"exec", "--sandbox", "workspace-write", "-C", "/project", "-o", "<out>", "sys\n\ntest"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			argsFile := filepath.Join(t.TempDir(), "args")
+			fakeBin(t, "codex", `printf '%s\0' "$@" > '`+argsFile+`'`)
+			if _, err := tt.run(&Codex{}); err != nil {
+				t.Fatal(err)
+			}
+			b, err := os.ReadFile(argsFile)
+			if err != nil {
+				t.Fatal(err)
+			}
+			args := strings.Split(strings.TrimSuffix(string(b), "\x00"), "\x00")
+			if i := slices.Index(args, "-o"); i >= 0 && i+1 < len(args) {
+				args[i+1] = "<out>" // a random temporary file
+			}
+			if !slices.Equal(args, tt.want) {
+				t.Errorf("args:\n got %q\nwant %q", args, tt.want)
+			}
+		})
 	}
 }
