@@ -6,6 +6,7 @@ import (
 	"maps"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -53,7 +54,7 @@ type UI struct {
 	status      session.Status
 	hasStatus   bool
 	launchedPID int    // the engine this app started, until it reports in
-	finished    int    // rounds that finished, which a start continues after
+	finished    int    // rounds that finished, or thinkers that ran, which a start continues after
 	message     string // the outcome of the last action, if it failed
 	lastPoll    time.Time
 
@@ -68,6 +69,7 @@ type UI struct {
 	runtime   widget.Enum
 	pattern   widget.Enum
 	rounds    widget.Editor
+	thinkers  widget.Editor
 	roles     map[backend.Role]*roleForm
 	initBtn   widget.Clickable
 	startBtn  widget.Clickable
@@ -158,6 +160,7 @@ func newUI(w *app.Window, folder string) *UI {
 	}
 	u.folderEd.SingleLine, u.folderEd.Submit = true, true
 	u.rounds.SingleLine, u.rounds.Filter = true, "0123456789"
+	u.thinkers.SingleLine, u.thinkers.Filter = true, "0123456789"
 	u.sidebar.Axis = layout.Vertical
 	u.turnList.Axis = layout.Vertical
 	u.entryList.Axis = layout.Vertical
@@ -214,6 +217,7 @@ func (u *UI) setSettings(s session.Settings) {
 	} else {
 		u.rounds.SetText("")
 	}
+	u.thinkers.SetText(strconv.Itoa(s.Thinkers))
 	for role, f := range u.roles {
 		a := s.Agents[role]
 		f.backend.Value = a.Backend
@@ -232,6 +236,7 @@ func (u *UI) readForm() session.Settings {
 		Agents:  map[backend.Role]session.Agent{},
 	}
 	s.Rounds, _ = strconv.Atoi(u.rounds.Text())
+	s.Thinkers, _ = strconv.Atoi(u.thinkers.Text())
 	for role, f := range u.roles {
 		s.Agents[role] = session.Agent{
 			Backend: f.backend.Value,
@@ -244,8 +249,11 @@ func (u *UI) readForm() session.Settings {
 }
 
 func equal(a, b session.Settings) bool {
-	return a.Pattern == b.Pattern && a.Runtime == b.Runtime && a.Rounds == b.Rounds && maps.Equal(a.Agents, b.Agents)
+	return a.Pattern == b.Pattern && a.Runtime == b.Runtime && a.Rounds == b.Rounds && a.Thinkers == b.Thinkers && maps.Equal(a.Agents, b.Agents)
 }
+
+// thinking reports whether the settings run thinkers rather than rounds.
+func (u *UI) thinking() bool { return u.settings.Pattern == loop.Thinkers }
 
 // check validates the settings and finds the logins they need.
 func (u *UI) check() {
@@ -352,8 +360,8 @@ func (u *UI) start() {
 		return
 	}
 	// Ralph commits the folder after each round, but it does not make it
-	// a repository unasked.
-	if u.isRepo = git.IsRepo(u.folder); !u.isRepo {
+	// a repository unasked. Thinkers need none.
+	if u.isRepo = git.IsRepo(u.folder); !u.isRepo && !u.thinking() {
 		u.message = notRepo
 		return
 	}
@@ -427,8 +435,13 @@ func (u *UI) poll() {
 	if u.settings.Runtime != session.Host {
 		u.logins = u.settings.Logins()
 	}
-	u.turns = session.Turns(u.folder)
-	u.finished = loop.ResumeRound(filepath.Join(u.folder, session.LogDir), u.settings.Pattern)
+	if u.thinking() {
+		u.turns = session.ThinkerLogs(u.folder)
+		u.finished = session.NextThinker(u.folder) - 1
+	} else {
+		u.turns = session.Turns(u.folder)
+		u.finished = loop.ResumeRound(filepath.Join(u.folder, session.LogDir), u.settings.Pattern)
+	}
 	for len(u.turnBtns) < len(u.turns)+firstTurnView {
 		u.turnBtns = append(u.turnBtns, widget.Clickable{})
 	}
@@ -454,11 +467,14 @@ func (u *UI) poll() {
 	}
 }
 
-// liveEntries returns the turns of the latest rounds, followed by what the
-// session is doing if it has no turn in progress.
+// liveEntries returns the turns of the latest rounds, or every thinker
+// and what it concluded, followed by what the session is doing if it has
+// no turn in progress.
 func (u *UI) liveEntries() []entry {
 	var es []entry
-	if n := len(u.turns); n > 0 {
+	if u.thinking() {
+		es = u.thinkerEntries()
+	} else if n := len(u.turns); n > 0 {
 		last := u.turns[n-1].Round
 		for _, t := range u.turns {
 			if t.Round > last-liveRounds {
@@ -471,6 +487,32 @@ func (u *UI) liveEntries() []entry {
 		es = append(es, u.consoleEntries(30)...)
 	} else if text, bad := u.statusText(); bad {
 		es = append(es, entry{kind: entryNote, text: text, bad: true})
+	}
+	return es
+}
+
+// thinkerEntries returns each thinker's heading and its final answer, or
+// why it has none.
+func (u *UI) thinkerEntries() []entry {
+	var es []entry
+	for _, t := range u.turns {
+		es = append(es, entry{kind: entryTurn, turn: t})
+		_, _, running := u.turnState(t)
+		note := entry{kind: entryNote, turn: t}
+		switch {
+		case t.Done && strings.TrimSpace(t.Result) != "":
+			es = append(es, entry{kind: entryEvent, turn: t, event: transcript.Event{Kind: transcript.Message, Text: t.Result}, key: t.Path + "#result"})
+			continue
+		case t.Done:
+			note.text = "It finished without an answer; see its transcript."
+		case t.Error != "":
+			note.text, note.bad = t.Error, true
+		case running:
+			note.text = "Thinking…"
+		default:
+			note.text, note.bad = "It stopped before it finished.", true
+		}
+		es = append(es, note)
 	}
 	return es
 }
@@ -546,6 +588,12 @@ func (u *UI) turnState(t session.TurnLog) (mark string, ok, running bool) {
 	switch {
 	case t.Done:
 		return "✓", true, false
+	case t.Role == backend.Thinker:
+		// Thinkers run side by side: any of the session's that has not
+		// finished is running.
+		if t.Error == "" && u.hasStatus && u.status.Active() && slices.Contains(u.status.Thinkers, t.Round) {
+			return "…", true, true
+		}
 	case len(u.turns) > 0 && t == u.turns[len(u.turns)-1] && u.active():
 		return "…", true, true
 	}
@@ -624,8 +672,14 @@ func (u *UI) update(gtx layout.Context) {
 // sync takes in what the user changed in the form.
 func (u *UI) sync(gtx layout.Context) {
 	if s := u.readForm(); !equal(s, u.settings) {
+		switched := (s.Pattern == loop.Thinkers) != u.thinking()
 		u.settings = s
 		u.check()
+		if switched {
+			// The middle column lists thinkers or turns.
+			u.showView(viewLive)
+			u.poll()
+		}
 		gtx.Execute(op.InvalidateCmd{})
 	}
 }
@@ -635,7 +689,7 @@ func (u *UI) statusText() (string, bool) {
 	if u.folder == "" {
 		return "Choose a project folder to begin.", false
 	}
-	if !u.isRepo {
+	if !u.isRepo && !u.thinking() {
 		return notRepo, true
 	}
 	if u.launchedPID != 0 {
@@ -652,6 +706,9 @@ func (u *UI) statusText() (string, bool) {
 		if st.State == session.Starting {
 			return "Preparing the folder and the container…", false
 		}
+		if st.Pattern == loop.Thinkers && len(st.Thinkers) > 0 {
+			return fmt.Sprintf("Running %s.", thinkersName(st.Thinkers)), false
+		}
 		if st.Role == "" {
 			return "Running.", false
 		}
@@ -666,8 +723,14 @@ func (u *UI) statusText() (string, bool) {
 	case session.Stopped:
 		return "Stopped.", false
 	case session.Finished:
+		if st.Pattern == loop.Thinkers {
+			return upperFirst(thinkersName(st.Thinkers)) + " finished.", false
+		}
 		return fmt.Sprintf("Ran the rounds asked for, up to round %d.", st.Round), false
 	case session.Failed:
+		if st.Pattern == loop.Thinkers {
+			return upperFirst(st.Error) + ".", true // such as "2 of 3 thinkers failed"
+		}
 		return "Failed: " + st.Error, true
 	}
 	return "", false
@@ -681,6 +744,25 @@ var roleInfo = map[backend.Role]string{
 	backend.Executor:   "Carries out the objective.",
 	backend.Evaluator:  "Checks the executor's work.",
 	backend.Archivist:  "Records what was learned in the memory file.",
+	backend.Thinker:    "Thinks alone, once, in a new empty folder and a container of its own, and proposes one idea.",
+}
+
+// thinkersName names thinkers numbered ns, which are consecutive.
+func thinkersName(ns []int) string {
+	switch len(ns) {
+	case 0:
+		return "thinkers"
+	case 1:
+		return fmt.Sprintf("thinker %d", ns[0])
+	}
+	return fmt.Sprintf("thinkers %d to %d", ns[0], ns[len(ns)-1])
+}
+
+func upperFirst(s string) string {
+	if s == "" {
+		return s
+	}
+	return strings.ToUpper(s[:1]) + s[1:]
 }
 
 func roleTitle(r backend.Role) string {

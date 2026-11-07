@@ -731,6 +731,93 @@ func TestOpenFolder(t *testing.T) {
 	}
 }
 
+func TestThinkers(t *testing.T) {
+	t.Setenv("ANTHROPIC_API_KEY", "x")
+	// Thinkers need no repository. The first finished, the second
+	// failed, and the third is still running.
+	folder := t.TempDir()
+	s := session.Defaults()
+	s.Pattern, s.Runtime, s.Thinkers = loop.Thinkers, "podman", 2
+	if err := s.Save(folder); err != nil {
+		t.Fatal(err)
+	}
+	logs := filepath.Join(folder, session.LogDir)
+	testdata := filepath.Join("..", "..", "internal", "transcript", "testdata")
+	copyFile(t, filepath.Join(testdata, "claude.jsonl"), filepath.Join(logs, "thinker1.jsonl"))
+	write(t, filepath.Join(logs, "thinker1.json"), `{"result":"## A garden planner\n\nPlan a garden by the light it gets."}`)
+	write(t, filepath.Join(logs, "thinker2.jsonl"), "")
+	write(t, filepath.Join(logs, "thinker2.json"), `{"result":"","error":"claude: exit status 1: Not logged in"}`)
+	write(t, filepath.Join(logs, "thinker3.jsonl"), "")
+	status := filepath.Join(folder, session.LocalDir, "status.json")
+	write(t, status, `{"pid":`+strconv.Itoa(os.Getpid())+`,"state":"running","pattern":"thinkers","runtime":"podman","thinkers":[3]}`)
+
+	u := newUI(nil, folder)
+	frame(t, u)
+	if !u.thinking() || len(u.turns) != 3 {
+		t.Fatalf("thinking = %v, turns = %+v", u.thinking(), u.turns)
+	}
+	for i, want := range []string{"✓", "✗", "…"} {
+		if mark, _, _ := u.turnState(u.turns[i]); mark != want {
+			t.Errorf("thinker %d: mark = %q, want %q", i+1, mark, want)
+		}
+	}
+	if s, bad := u.statusText(); bad || s != "Running thinker 3." {
+		t.Errorf("status = %q, %v", s, bad)
+	}
+	// The live view shows each thinker's answer, failure, or progress.
+	if got := kinds(u.entries); got != "TETNTN" {
+		t.Errorf("entries = %s, want TETNTN", got)
+	}
+	if e := u.entries[1].event; !strings.Contains(e.Text, "garden planner") {
+		t.Errorf("answer = %+v", e)
+	}
+	if e := u.entries[3]; !e.bad || !strings.Contains(e.text, "Not logged in") {
+		t.Errorf("failure = %+v", e)
+	}
+	if e := u.entries[5]; e.bad || e.text != "Thinking…" {
+		t.Errorf("progress = %+v", e)
+	}
+	screenshot(t, u, "thinkers")
+
+	// A thinker's own view shows its transcript.
+	u.showView(firstTurnView)
+	u.poll()
+	if got := kinds(u.entries); !strings.HasPrefix(got, "TE") || len(got) < 3 {
+		t.Errorf("transcript entries = %s", got)
+	}
+
+	// Once the session is over, the next start runs thinkers after these.
+	write(t, status, `{"pid":1,"state":"stopped","pattern":"thinkers","runtime":"podman","thinkers":[3]}`)
+	u.showView(viewLive)
+	u.poll()
+	if mark, _, _ := u.turnState(u.turns[2]); mark != "✗" {
+		t.Errorf("stopped thinker: mark = %q", mark)
+	}
+	if got := u.roundsText(); !strings.Contains(got, "thinkers 4 to 5") || !strings.Contains(got, "thinker4 to thinker5") {
+		t.Errorf("rounds text = %q", got)
+	}
+	if s, bad := u.statusText(); bad || strings.Contains(s, "git") {
+		t.Errorf("status = %q, %v", s, bad)
+	}
+
+	// Running thinkers on this machine is refused.
+	u.runtime.Value = session.Host
+	frame(t, u)
+	if u.invalid == nil || !strings.Contains(u.invalid.Error(), "container") {
+		t.Errorf("invalid = %v", u.invalid)
+	}
+
+	// Switching to rounds lists the folder's turns, of which it has none.
+	u.pattern.Value = string(loop.ThinkAct)
+	frame(t, u)
+	if u.thinking() || len(u.turns) != 0 {
+		t.Errorf("thinking = %v, turns = %+v", u.thinking(), u.turns)
+	}
+	if s, bad := u.statusText(); !bad || s != notRepo {
+		t.Errorf("status = %q", s)
+	}
+}
+
 func TestStatusText(t *testing.T) {
 	u := newUI(nil, repo(t))
 	if s, _ := u.statusText(); s != "Not started yet." {
