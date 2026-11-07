@@ -3,9 +3,11 @@
 //
 // Usage:
 //
-//	ralph [--backend claude|codex] [--model NAME] [--pattern NAME] [--max-rounds N] <folder>
+//	ralph [--runtime host|podman|docker] [--backend claude|codex] [--model NAME]
+//	      [--pattern NAME] [--max-rounds N] <folder>
 //
-// Run ralph --help for the list of patterns.
+// Run ralph --help for the list of patterns. The ralph-gui command offers
+// the same with per-role settings and a live view of the agents' work.
 package main
 
 import (
@@ -18,14 +20,21 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"syscall"
 
 	"github.com/changkun/ralph/internal/backend"
 	"github.com/changkun/ralph/internal/loop"
+	"github.com/changkun/ralph/internal/session"
 )
 
 const usage = `Usage: ralph [options] <folder>
 
+Runs coding agents in rounds on <folder>, committing it after each round.
+
 Options:
+  --runtime host|podman|docker
+                           where agents run (default host): on this machine,
+                           or in a container that sees only <folder>
   --backend claude|codex   agent CLI to run (default claude)
   --model NAME             model for every role (default: the CLI's default)
   --pattern NAME           roles in each round (default think+act); one of
@@ -39,6 +48,7 @@ Options:
 var errHelp = errors.New("help requested")
 
 type config struct {
+	runtime     string
 	backendName string
 	model       string
 	pattern     loop.Pattern
@@ -47,7 +57,7 @@ type config struct {
 }
 
 func parseArgs(args []string) (config, error) {
-	cfg := config{backendName: "claude", pattern: loop.ThinkAct}
+	cfg := config{runtime: session.Host, backendName: "claude", pattern: loop.ThinkAct}
 	for len(args) > 0 {
 		arg := args[0]
 		args = args[1:]
@@ -61,7 +71,7 @@ func parseArgs(args []string) (config, error) {
 			cfg.folder = arg
 			continue
 		}
-		if !slices.Contains([]string{"--backend", "--model", "--pattern", "--max-rounds"}, arg) {
+		if !slices.Contains([]string{"--runtime", "--backend", "--model", "--pattern", "--max-rounds"}, arg) {
 			return cfg, fmt.Errorf("unknown option %s", arg)
 		}
 		if len(args) == 0 {
@@ -70,6 +80,11 @@ func parseArgs(args []string) (config, error) {
 		value := args[0]
 		args = args[1:]
 		switch arg {
+		case "--runtime":
+			if !slices.Contains(session.Runtimes, value) {
+				return cfg, fmt.Errorf("unknown runtime %q; want one of %s", value, strings.Join(session.Runtimes, ", "))
+			}
+			cfg.runtime = value
 		case "--backend":
 			if backend.New(value, nil) == nil {
 				return cfg, fmt.Errorf("unknown backend %q; want claude or codex", value)
@@ -99,34 +114,17 @@ func parseArgs(args []string) (config, error) {
 	return cfg, err
 }
 
-func run(ctx context.Context, cfg config, be backend.Backend) error {
-	ralphDir := filepath.Join(cfg.folder, ".ralph")
-	if err := os.MkdirAll(ralphDir, 0o755); err != nil {
-		return err
+func run(ctx context.Context, cfg config) error {
+	s := session.Defaults()
+	s.Runtime = cfg.runtime
+	s.Pattern = cfg.pattern
+	s.MaxRounds = cfg.maxRounds
+	for role, a := range s.Agents {
+		a.Backend, a.Model = cfg.backendName, cfg.model
+		s.Agents[role] = a
 	}
-	finished := loop.ResumeRound(ralphDir, cfg.pattern)
-	fmt.Printf("=== Ralph loop starting ===\nBackend: %s\nPattern: %s\nFolder: %s\n", cfg.backendName, cfg.pattern, cfg.folder)
-	if cfg.model != "" {
-		fmt.Printf("Model: %s\n", cfg.model)
-	}
-	if finished > 0 {
-		fmt.Printf("Resuming after round %d\n", finished)
-	}
-	if cfg.maxRounds > 0 {
-		fmt.Printf("Max rounds: %d\n", cfg.maxRounds)
-	}
-	fmt.Print("Press Ctrl-C to stop.\n\n")
-	agents := map[backend.Role]loop.Agent{}
-	for _, role := range cfg.pattern.Roles() {
-		agents[role] = loop.Agent{Backend: be, Model: cfg.model}
-	}
-	return loop.Run(ctx, loop.Config{
-		Pattern:   cfg.pattern,
-		Agents:    agents,
-		Folder:    cfg.folder,
-		LogDir:    ralphDir,
-		MaxRounds: cfg.maxRounds,
-	}, finished)
+	fmt.Print("Press Ctrl-C to stop.\n")
+	return session.Run(ctx, cfg.folder, s, os.Stdout)
 }
 
 // osExit is os.Exit, replaced in tests.
@@ -142,9 +140,9 @@ func realMain(args []string) int {
 		fmt.Fprintf(os.Stderr, "Error: %v\n\n%s", err, usage)
 		return 1
 	}
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
-	if err := run(ctx, cfg, backend.New(cfg.backendName, nil)); err != nil {
+	if err := run(ctx, cfg); err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		return 1
 	}
