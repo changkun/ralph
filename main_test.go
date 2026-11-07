@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/changkun/ralph/internal/loop"
+	"github.com/changkun/ralph/internal/session"
 )
 
 func TestParseArgs(t *testing.T) {
@@ -27,6 +28,7 @@ func TestParseArgs(t *testing.T) {
 		{"standalone", []string{"--pattern", "standalone", "/tmp"}, "claude", loop.Standalone, 0},
 		{"legacy pattern", []string{"--pattern", "builder", "/tmp"}, "claude", loop.Standalone, 0},
 		{"full pipeline", []string{"--pattern", "think+act+evaluator+archivist", "/tmp"}, "claude", loop.ThinkActEvaluatorArchivist, 0},
+		{"thinkers", []string{"--pattern", "thinkers", "--runtime", "podman", "/tmp"}, "claude", loop.Thinkers, 0},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -70,6 +72,11 @@ func TestParseArgsErrors(t *testing.T) {
 		{"rounds not a number", []string{"--rounds", "abc", "/tmp"}},
 		{"rounds trailing junk", []string{"--rounds", "5x", "/tmp"}},
 		{"rounds negative", []string{"--rounds", "-1", "/tmp"}},
+		{"thinkers on host", []string{"--pattern", "thinkers", "/tmp"}},
+		{"no thinkers", []string{"--thinkers", "0", "/tmp"}},
+		{"too many thinkers", []string{"--thinkers", "21", "/tmp"}},
+		{"thinkers not a number", []string{"--thinkers", "x", "/tmp"}},
+		{"thinkers without value", []string{"--thinkers"}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -77,6 +84,17 @@ func TestParseArgsErrors(t *testing.T) {
 				t.Errorf("err = %v, want a usage error", err)
 			}
 		})
+	}
+}
+
+func TestParseArgsThinkers(t *testing.T) {
+	cfg, err := parseArgs([]string{"/tmp"})
+	if err != nil || cfg.thinkers != 3 {
+		t.Errorf("thinkers = %d, err = %v; want 3", cfg.thinkers, err)
+	}
+	cfg, err = parseArgs([]string{"--pattern", "thinkers", "--runtime", "docker", "--thinkers", "5", "/tmp"})
+	if err != nil || cfg.thinkers != 5 {
+		t.Errorf("thinkers = %d, err = %v; want 5", cfg.thinkers, err)
 	}
 }
 
@@ -119,6 +137,35 @@ func TestRun(t *testing.T) {
 				t.Errorf("finished rounds = %d, want 1", got)
 			}
 		})
+	}
+}
+
+func TestRunThinkers(t *testing.T) {
+	fakeClaude(t)
+	// A fake podman that runs exec'd commands on this machine, in the
+	// folder the container mounts.
+	bin := t.TempDir()
+	podman := `#!/bin/sh
+d=$(dirname "$0")
+case "$1" in
+run) while [ $# -gt 0 ]; do case "$1" in --name) n=$2 ;; -v) v=$2 ;; esac; shift; done
+  echo "${v%%:*}" > "$d/$n.dir"; echo id ;;
+exec) shift 3; c=$1; shift; cd "$(cat "$d/$c.dir")" && exec "$@" ;;
+esac
+`
+	if err := os.WriteFile(filepath.Join(bin, "podman"), []byte(podman), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	t.Setenv("ANTHROPIC_API_KEY", "x")
+
+	dir := t.TempDir()
+	cfg := config{runtime: "podman", backendName: "claude", pattern: loop.Thinkers, thinkers: 2, folder: dir}
+	if err := run(context.Background(), cfg); err != nil {
+		t.Fatal(err)
+	}
+	if logs := session.ThinkerLogs(dir); len(logs) != 2 || !logs[1].Done || logs[1].Result != "ok" {
+		t.Errorf("thinker logs = %+v", logs)
 	}
 }
 
