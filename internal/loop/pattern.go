@@ -60,8 +60,8 @@ func ParsePattern(name string) (Pattern, error) {
 	return "", fmt.Errorf("unknown pattern %q; want one of %s", name, strings.Join(names, ", "))
 }
 
-// roles returns the roles that run in each round of p, in order.
-func (p Pattern) roles() []backend.Role {
+// Roles returns the roles that run in each round of p, in order.
+func (p Pattern) Roles() []backend.Role {
 	switch p {
 	case Standalone:
 		return []backend.Role{backend.Standalone}
@@ -74,10 +74,10 @@ func (p Pattern) roles() []backend.Role {
 	}
 }
 
-func (p Pattern) has(role backend.Role) bool { return slices.Contains(p.roles(), role) }
+func (p Pattern) has(role backend.Role) bool { return slices.Contains(p.Roles(), role) }
 
 // lastRole returns the role whose round log marks a round of p as done.
 func (p Pattern) lastRole() backend.Role {
-	roles := p.roles()
+	roles := p.Roles()
 	return roles[len(roles)-1]
 }

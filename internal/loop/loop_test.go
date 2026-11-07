@@ -1,6 +1,7 @@
 package loop
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -15,6 +16,7 @@ import (
 	"github.com/changkun/ralph/internal/backend"
 	"github.com/changkun/ralph/internal/git"
 	"github.com/changkun/ralph/internal/prompt"
+	"github.com/changkun/ralph/internal/transcript"
 )
 
 type reply func(ctx context.Context) (string, error)
@@ -22,28 +24,60 @@ type reply func(ctx context.Context) (string, error)
 func say(s string) reply { return func(context.Context) (string, error) { return s, nil } }
 
 // fakeBackend answers each role with replies[role], or with "<role> done" if
-// there is none, and records the roles it ran and the prompts it received.
+// there is none, and records the turns it ran. Each turn streams one
+// transcript line and one message event.
 type fakeBackend struct {
 	replies map[backend.Role]reply
-	calls   []backend.Role
-	prompts map[backend.Role]prompt.Prompt
+	turns   []backend.Turn
 }
 
-func (f *fakeBackend) Run(ctx context.Context, role backend.Role, _ string, p prompt.Prompt) ([]byte, error) {
-	f.calls = append(f.calls, role)
-	if f.prompts == nil {
-		f.prompts = map[backend.Role]prompt.Prompt{}
-	}
-	f.prompts[role] = p
-	r, ok := f.replies[role]
+func (f *fakeBackend) Run(ctx context.Context, t backend.Turn) (string, error) {
+	f.turns = append(f.turns, t)
+	r, ok := f.replies[t.Role]
 	if !ok {
-		r = say(string(role) + " done")
+		r = say(string(t.Role) + " done")
 	}
-	result, err := r(ctx)
-	if err != nil {
-		return nil, err
+	if t.Transcript != nil {
+		t.Transcript.Write([]byte(`{"type":"fake"}` + "\n"))
 	}
-	return json.Marshal(backend.Result{Value: result})
+	if t.OnEvent != nil {
+		t.OnEvent(transcript.Event{Kind: transcript.Message, Text: "working as " + string(t.Role)})
+	}
+	return r(ctx)
+}
+
+func (f *fakeBackend) roles() []backend.Role {
+	var roles []backend.Role
+	for _, t := range f.turns {
+		roles = append(roles, t.Role)
+	}
+	return roles
+}
+
+func (f *fakeBackend) turn(role backend.Role) backend.Turn {
+	for _, t := range f.turns {
+		if t.Role == role {
+			return t
+		}
+	}
+	return backend.Turn{}
+}
+
+// config returns a loop configuration that runs every role of p with be,
+// in and logging to dir, for maxRounds rounds.
+func config(be backend.Backend, p Pattern, dir string, maxRounds int) Config {
+	agents := map[backend.Role]Agent{}
+	for _, role := range p.Roles() {
+		agents[role] = Agent{Backend: be}
+	}
+	return Config{
+		Pattern:   p,
+		Agents:    agents,
+		Folder:    dir,
+		LogDir:    dir,
+		MaxRounds: maxRounds,
+		Output:    &bytes.Buffer{},
+	}
 }
 
 // logs returns the names of the round logs in dir.
@@ -60,6 +94,16 @@ func logs(t *testing.T, dir string) []string {
 	return names
 }
 
+// roundLogs returns the names of both logs of each role in round 1.
+func roundLogs(roles ...backend.Role) []string {
+	var names []string
+	for _, role := range roles {
+		names = append(names, "round-001-"+string(role)+".json", "round-001-"+string(role)+".jsonl")
+	}
+	slices.Sort(names)
+	return names
+}
+
 func assertEqual[T comparable](t *testing.T, what string, got, want []T) {
 	t.Helper()
 	if !slices.Equal(got, want) {
@@ -68,82 +112,151 @@ func assertEqual[T comparable](t *testing.T, what string, got, want []T) {
 }
 
 func TestRunPatterns(t *testing.T) {
-	tests := []struct {
-		pattern Pattern
-		roles   []backend.Role
-	}{
-		{Standalone, []backend.Role{"standalone"}},
-		{ThinkAct, []backend.Role{"strategist", "executor"}},
-		{ThinkActEvaluator, []backend.Role{"strategist", "executor", "evaluator"}},
-		{ThinkActEvaluatorArchivist, []backend.Role{"strategist", "executor", "evaluator", "archivist"}},
-	}
-	for _, tt := range tests {
-		t.Run(string(tt.pattern), func(t *testing.T) {
+	for _, p := range Patterns {
+		t.Run(string(p), func(t *testing.T) {
 			dir := t.TempDir()
 			be := &fakeBackend{}
-			if err := Run(context.Background(), be, tt.pattern, dir, dir, 0, 1); err != nil {
+			if err := Run(context.Background(), config(be, p, dir, 1), 0); err != nil {
 				t.Fatal(err)
 			}
-			assertEqual(t, "roles run", be.calls, tt.roles)
-			var want []string
-			for _, role := range tt.roles {
-				want = append(want, "round-001-"+string(role)+".json")
-			}
-			slices.Sort(want)
-			assertEqual(t, "logs", logs(t, dir), want)
+			assertEqual(t, "roles run", be.roles(), p.Roles())
+			assertEqual(t, "logs", logs(t, dir), roundLogs(p.Roles()...))
 		})
+	}
+}
+
+func TestRunSavesLogs(t *testing.T) {
+	dir := t.TempDir()
+	if err := Run(context.Background(), config(&fakeBackend{}, Standalone, dir, 1), 0); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(filepath.Join(dir, "round-001-standalone.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var result struct{ Result string }
+	if err := json.Unmarshal(data, &result); err != nil || result.Result != "standalone done" {
+		t.Errorf("result log = %s (%v)", data, err)
+	}
+	data, err = os.ReadFile(filepath.Join(dir, "round-001-standalone.jsonl"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := string(data), `{"type":"fake"}`+"\n"; got != want {
+		t.Errorf("transcript = %q, want %q", got, want)
 	}
 }
 
 func TestRunNumbersRoundsAfterFinished(t *testing.T) {
 	dir := t.TempDir()
-	if err := Run(context.Background(), &fakeBackend{}, ThinkAct, dir, dir, 2, 4); err != nil {
+	if err := Run(context.Background(), config(&fakeBackend{}, Standalone, dir, 4), 2); err != nil {
 		t.Fatal(err)
 	}
 	assertEqual(t, "logs", logs(t, dir), []string{
-		"round-003-executor.json", "round-003-strategist.json",
-		"round-004-executor.json", "round-004-strategist.json",
+		"round-003-standalone.json", "round-003-standalone.jsonl",
+		"round-004-standalone.json", "round-004-standalone.jsonl",
 	})
 }
 
 func TestRunPassesRoundToLaterRoles(t *testing.T) {
 	dir := t.TempDir()
 	be := &fakeBackend{}
-	if err := Run(context.Background(), be, ThinkActEvaluatorArchivist, dir, dir, 0, 1); err != nil {
+	cfg := config(be, ThinkActEvaluatorArchivist, dir, 1)
+	cfg.AgentFolder = "/work"
+	if err := Run(context.Background(), cfg, 0); err != nil {
 		t.Fatal(err)
 	}
-	archivist := be.prompts[backend.Archivist].User
-	for _, want := range []string{dir, "strategist done", "executor done", "evaluator done", "AGENTS.md"} {
+	for _, turn := range be.turns {
+		if turn.Folder != "/work" {
+			t.Errorf("%s ran in %q, want the agent folder", turn.Role, turn.Folder)
+		}
+	}
+	archivist := be.turn(backend.Archivist).Prompt.User
+	for _, want := range []string{"/work", "strategist done", "executor done", "evaluator done", "AGENTS.md"} {
 		if !strings.Contains(archivist, want) {
 			t.Errorf("archivist prompt does not contain %q:\n%s", want, archivist)
 		}
 	}
 }
 
+func TestRunUsesEachRolesAgent(t *testing.T) {
+	dir := t.TempDir()
+	thinker, doer := &fakeBackend{}, &fakeBackend{}
+	tmpl, err := prompt.Parse(prompt.Text{System: "custom system", Prompt: "work on {{.Objective}}"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg := config(nil, ThinkAct, dir, 1)
+	cfg.Agents = map[backend.Role]Agent{
+		backend.Strategist: {Backend: thinker, Model: "big"},
+		backend.Executor:   {Backend: doer, Model: "small", Template: tmpl},
+	}
+	if err := Run(context.Background(), cfg, 0); err != nil {
+		t.Fatal(err)
+	}
+	assertEqual(t, "strategist backend ran", thinker.roles(), []backend.Role{backend.Strategist})
+	assertEqual(t, "executor backend ran", doer.roles(), []backend.Role{backend.Executor})
+	if m := thinker.turns[0].Model; m != "big" {
+		t.Errorf("strategist model = %q", m)
+	}
+	got := doer.turns[0]
+	want := prompt.Prompt{System: "custom system", User: "work on strategist done"}
+	if got.Model != "small" || got.Prompt != want {
+		t.Errorf("executor turn: model %q, prompt %+v; want small, %+v", got.Model, got.Prompt, want)
+	}
+}
+
+func TestRunRequiresAnAgentPerRole(t *testing.T) {
+	cfg := config(&fakeBackend{}, ThinkAct, t.TempDir(), 1)
+	delete(cfg.Agents, backend.Executor)
+	err := Run(context.Background(), cfg, 0)
+	if err == nil || !strings.Contains(err.Error(), "executor") {
+		t.Errorf("err = %v, want one naming the executor", err)
+	}
+}
+
+func TestRunTemplateError(t *testing.T) {
+	// The template renders for an empty round but fails on this objective.
+	tmpl, err := prompt.Parse(prompt.Text{Prompt: `{{if .Objective}}{{index .Objective 99}}{{end}}`})
+	if err != nil {
+		t.Fatal(err)
+	}
+	be := &fakeBackend{}
+	cfg := config(be, ThinkAct, t.TempDir(), 1)
+	cfg.Agents[backend.Executor] = Agent{Backend: be, Template: tmpl}
+	if err := Run(context.Background(), cfg, 0); err == nil || !strings.HasPrefix(err.Error(), "executor: ") {
+		t.Errorf("err = %v, want an executor template error", err)
+	}
+	assertEqual(t, "roles run", be.roles(), []backend.Role{backend.Strategist})
+}
+
 func TestRunSkipsRoundWithoutObjective(t *testing.T) {
 	for _, p := range []Pattern{ThinkAct, Standalone} {
 		t.Run(string(p), func(t *testing.T) {
-			dir := t.TempDir()
 			be := &fakeBackend{replies: map[backend.Role]reply{
 				backend.Strategist: say(""),
 				backend.Standalone: say(""),
 			}}
-			if err := Run(context.Background(), be, p, dir, dir, 0, 2); err != nil {
+			cfg := config(be, p, t.TempDir(), 2)
+			if err := Run(context.Background(), cfg, 0); err != nil {
 				t.Fatal(err)
 			}
-			first := p.roles()[0]
-			assertEqual(t, "roles run", be.calls, []backend.Role{first, first})
+			first := p.Roles()[0]
+			assertEqual(t, "roles run", be.roles(), []backend.Role{first, first})
+			out := cfg.Output.(*bytes.Buffer).String()
+			if !strings.Contains(out, "produced no output") || !strings.Contains(out, "Round 2 skipped") {
+				t.Errorf("output does not report the skipped rounds:\n%s", out)
+			}
 		})
 	}
 }
 
 func TestRunContinuesAfterEmptyExecutorResult(t *testing.T) {
-	dir := t.TempDir()
 	be := &fakeBackend{replies: map[backend.Role]reply{backend.Executor: say("")}}
-	if err := Run(context.Background(), be, ThinkActEvaluator, dir, dir, 0, 1); err != nil {
+	if err := Run(context.Background(), config(be, ThinkActEvaluator, t.TempDir(), 1), 0); err != nil {
 		t.Fatal(err)
 	}
-	assertEqual(t, "roles run", be.calls, []backend.Role{"strategist", "executor", "evaluator"})
+	assertEqual(t, "roles run", be.roles(), ThinkActEvaluator.Roles())
 }
 
 func TestRunStopsOnAgentError(t *testing.T) {
@@ -151,33 +264,67 @@ func TestRunStopsOnAgentError(t *testing.T) {
 	be := &fakeBackend{replies: map[backend.Role]reply{
 		backend.Executor: func(context.Context) (string, error) { return "", errors.New("not logged in") },
 	}}
-	err := Run(context.Background(), be, ThinkActEvaluator, dir, dir, 0, 0)
+	err := Run(context.Background(), config(be, ThinkActEvaluator, dir, 0), 0)
 	if err == nil || err.Error() != "executor: not logged in" {
 		t.Errorf("err = %v, want %q", err, "executor: not logged in")
 	}
-	assertEqual(t, "roles run", be.calls, []backend.Role{"strategist", "executor"})
-	assertEqual(t, "logs", logs(t, dir), []string{"round-001-strategist.json"})
+	assertEqual(t, "roles run", be.roles(), []backend.Role{"strategist", "executor"})
+	// The failed turn keeps its transcript but has no result.
+	assertEqual(t, "logs", logs(t, dir), []string{
+		"round-001-executor.jsonl", "round-001-strategist.json", "round-001-strategist.jsonl",
+	})
 }
 
 func TestRunStopsOnInterrupt(t *testing.T) {
-	dir := t.TempDir()
 	ctx, cancel := context.WithCancel(context.Background())
 	be := &fakeBackend{replies: map[backend.Role]reply{
 		backend.Executor: func(ctx context.Context) (string, error) { cancel(); return "", ctx.Err() },
 	}}
-	if err := Run(ctx, be, ThinkActEvaluator, dir, dir, 0, 0); err != nil {
+	if err := Run(ctx, config(be, ThinkActEvaluator, t.TempDir(), 0), 0); err != nil {
 		t.Errorf("err = %v, want nil after an interrupt", err)
 	}
-	assertEqual(t, "roles run", be.calls, []backend.Role{"strategist", "executor"})
+	assertEqual(t, "roles run", be.roles(), []backend.Role{"strategist", "executor"})
 }
 
 func TestRunRecreatesLogDir(t *testing.T) {
 	dir := t.TempDir()
-	ralphDir := filepath.Join(dir, ".ralph")
-	if err := Run(context.Background(), &fakeBackend{}, Standalone, dir, ralphDir, 0, 1); err != nil {
+	cfg := config(&fakeBackend{}, Standalone, dir, 1)
+	cfg.LogDir = filepath.Join(dir, ".ralph")
+	if err := Run(context.Background(), cfg, 0); err != nil {
 		t.Fatal(err)
 	}
-	assertEqual(t, "logs", logs(t, ralphDir), []string{"round-001-standalone.json"})
+	assertEqual(t, "logs", logs(t, cfg.LogDir), roundLogs(backend.Standalone))
+}
+
+func TestRunWithoutLogDir(t *testing.T) {
+	cfg := config(&fakeBackend{}, Standalone, t.TempDir(), 1)
+	cfg.LogDir = "/dev/null/logs"
+	if err := Run(context.Background(), cfg, 0); err != nil {
+		t.Fatal(err)
+	}
+	out := cfg.Output.(*bytes.Buffer).String()
+	for _, want := range []string{"Could not save the standalone transcript", "Could not save the standalone log"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("output does not contain %q:\n%s", want, out)
+		}
+	}
+}
+
+func TestRunCallsOnStep(t *testing.T) {
+	type step struct {
+		round int
+		role  backend.Role
+	}
+	var steps []step
+	cfg := config(&fakeBackend{}, ThinkAct, t.TempDir(), 2)
+	cfg.OnStep = func(round int, role backend.Role) { steps = append(steps, step{round, role}) }
+	if err := Run(context.Background(), cfg, 0); err != nil {
+		t.Fatal(err)
+	}
+	assertEqual(t, "steps", steps, []step{
+		{1, backend.Strategist}, {1, backend.Executor},
+		{2, backend.Strategist}, {2, backend.Executor},
+	})
 }
 
 func TestRunCommitsEachRound(t *testing.T) {
@@ -197,7 +344,9 @@ func TestRunCommitsEachRound(t *testing.T) {
 			return "wrote f.txt", os.WriteFile(filepath.Join(dir, "f.txt"), []byte("x"), 0o644)
 		},
 	}}
-	if err := Run(context.Background(), be, ThinkAct, dir, filepath.Join(dir, ".ralph"), 0, 1); err != nil {
+	cfg := config(be, ThinkAct, dir, 1)
+	cfg.LogDir = filepath.Join(dir, ".ralph")
+	if err := Run(context.Background(), cfg, 0); err != nil {
 		t.Fatal(err)
 	}
 	if git.HasChanges(dir) {
@@ -209,6 +358,32 @@ func TestRunCommitsEachRound(t *testing.T) {
 	}
 	if got, want := strings.TrimSpace(string(out)), "ralph: strategist done"; got != want {
 		t.Errorf("commit subject = %q, want %q", got, want)
+	}
+}
+
+func TestPrintEvent(t *testing.T) {
+	tests := []struct {
+		event transcript.Event
+		want  string
+	}{
+		{transcript.Event{Kind: transcript.Info, Title: "Claude Code 2.1 · opus"}, "  · Claude Code 2.1 · opus\n"},
+		{transcript.Event{Kind: transcript.Message, Text: " Done.\n"}, "\nDone.\n\n"},
+		{transcript.Event{Kind: transcript.Thinking, Text: "hmm"}, ""},
+		{transcript.Event{Kind: transcript.ToolCall, Title: "Read main.go"}, "  ▸ Read main.go\n"},
+		{transcript.Event{Kind: transcript.FileChange, Title: "update main.go"}, "  ▸ update main.go\n"},
+		{transcript.Event{Kind: transcript.Command, Title: "go test ./..."}, "  $ go test ./...\n"},
+		{transcript.Event{Kind: transcript.ToolResult, Text: "ok"}, ""},
+		{transcript.Event{Kind: transcript.ToolResult, Text: "no such file\nmore", Failed: true}, "    ✗ no such file\n"},
+		{transcript.Event{Kind: transcript.Error, Text: "rate limited\nretrying"}, "  [!] rate limited\n"},
+		{transcript.Event{Kind: transcript.Result, Title: "Finished in 3s"}, "  ✓ Finished in 3s\n"},
+		{transcript.Event{Kind: transcript.Result, Title: "Failed", Failed: true}, "  ✗ Failed\n"},
+	}
+	for _, tt := range tests {
+		var b strings.Builder
+		printEvent(&b, tt.event)
+		if b.String() != tt.want {
+			t.Errorf("printEvent(%+v) = %q, want %q", tt.event, b.String(), tt.want)
+		}
 	}
 }
 

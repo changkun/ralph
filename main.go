@@ -3,7 +3,7 @@
 //
 // Usage:
 //
-//	ralph [--backend claude|codex] [--pattern NAME] [--max-rounds N] <folder>
+//	ralph [--backend claude|codex] [--model NAME] [--pattern NAME] [--max-rounds N] <folder>
 //
 // Run ralph --help for the list of patterns.
 package main
@@ -15,6 +15,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -26,6 +27,7 @@ const usage = `Usage: ralph [options] <folder>
 
 Options:
   --backend claude|codex   agent CLI to run (default claude)
+  --model NAME             model for every role (default: the CLI's default)
   --pattern NAME           roles in each round (default think+act); one of
                            standalone, think+act, think+act+evaluator,
                            think+act+evaluator+archivist
@@ -38,6 +40,7 @@ var errHelp = errors.New("help requested")
 
 type config struct {
 	backendName string
+	model       string
 	pattern     loop.Pattern
 	maxRounds   int
 	folder      string
@@ -58,7 +61,7 @@ func parseArgs(args []string) (config, error) {
 			cfg.folder = arg
 			continue
 		}
-		if arg != "--backend" && arg != "--pattern" && arg != "--max-rounds" {
+		if !slices.Contains([]string{"--backend", "--model", "--pattern", "--max-rounds"}, arg) {
 			return cfg, fmt.Errorf("unknown option %s", arg)
 		}
 		if len(args) == 0 {
@@ -68,10 +71,12 @@ func parseArgs(args []string) (config, error) {
 		args = args[1:]
 		switch arg {
 		case "--backend":
-			if backend.New(value) == nil {
+			if backend.New(value, nil) == nil {
 				return cfg, fmt.Errorf("unknown backend %q; want claude or codex", value)
 			}
 			cfg.backendName = value
+		case "--model":
+			cfg.model = value
 		case "--pattern":
 			p, err := loop.ParsePattern(value)
 			if err != nil {
@@ -101,6 +106,9 @@ func run(ctx context.Context, cfg config, be backend.Backend) error {
 	}
 	finished := loop.ResumeRound(ralphDir, cfg.pattern)
 	fmt.Printf("=== Ralph loop starting ===\nBackend: %s\nPattern: %s\nFolder: %s\n", cfg.backendName, cfg.pattern, cfg.folder)
+	if cfg.model != "" {
+		fmt.Printf("Model: %s\n", cfg.model)
+	}
 	if finished > 0 {
 		fmt.Printf("Resuming after round %d\n", finished)
 	}
@@ -108,7 +116,17 @@ func run(ctx context.Context, cfg config, be backend.Backend) error {
 		fmt.Printf("Max rounds: %d\n", cfg.maxRounds)
 	}
 	fmt.Print("Press Ctrl-C to stop.\n\n")
-	return loop.Run(ctx, be, cfg.pattern, cfg.folder, ralphDir, finished, cfg.maxRounds)
+	agents := map[backend.Role]loop.Agent{}
+	for _, role := range cfg.pattern.Roles() {
+		agents[role] = loop.Agent{Backend: be, Model: cfg.model}
+	}
+	return loop.Run(ctx, loop.Config{
+		Pattern:   cfg.pattern,
+		Agents:    agents,
+		Folder:    cfg.folder,
+		LogDir:    ralphDir,
+		MaxRounds: cfg.maxRounds,
+	}, finished)
 }
 
 // osExit is os.Exit, replaced in tests.
@@ -126,7 +144,7 @@ func realMain(args []string) int {
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer stop()
-	if err := run(ctx, cfg, backend.New(cfg.backendName)); err != nil {
+	if err := run(ctx, cfg, backend.New(cfg.backendName, nil)); err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		return 1
 	}

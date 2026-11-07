@@ -2,49 +2,43 @@ package backend
 
 import (
 	"context"
-	"encoding/json"
-	"os"
-	"os/exec"
-
-	"github.com/changkun/ralph/internal/prompt"
 )
 
 // Codex runs turns through the OpenAI Codex CLI's non-interactive exec mode.
-type Codex struct{}
+type Codex struct {
+	Env Env // where the CLI runs; nil means Host
+}
 
-// Run implements Backend. Codex runs in the workspace-write sandbox, so the
-// agent can edit files in folder. A read-only role, the strategist, runs in
-// the read-only sandbox instead, and its session is not persisted.
-func (*Codex) Run(ctx context.Context, role Role, folder string, p prompt.Prompt) ([]byte, error) {
-	// codex exec writes the agent's final message to the file named by -o.
-	f, err := os.CreateTemp("", "ralph-*.txt")
-	if err != nil {
-		return nil, err
-	}
-	outFile := f.Name()
-	f.Close()
-	defer os.Remove(outFile)
-
+// Run implements Backend.
+//
+// On the host, Codex runs in its workspace-write sandbox, so the agent can
+// edit files in the folder, and a read-only role, the strategist, runs in
+// its read-only sandbox. Codex's sandbox does not work inside a container,
+// so in an isolated Env every role runs with danger-full-access and the Env
+// enforces read-only access. Strategist sessions are not persisted.
+func (c *Codex) Run(ctx context.Context, t Turn) (string, error) {
+	env := envOrHost(c.Env)
 	// codex exec has no system prompt option, so prepend it to the message.
-	message := p.User
-	if p.System != "" {
-		message = p.System + "\n\n" + p.User
+	message := t.Prompt.User
+	if t.Prompt.System != "" {
+		message = t.Prompt.System + "\n\n" + t.Prompt.User
 	}
 
-	args := []string{"exec", "--sandbox", "workspace-write"}
-	if role.readOnly() {
-		args = []string{"exec", "--sandbox", "read-only", "--ephemeral"}
+	args := []string{"exec", "--json", "--skip-git-repo-check", "--sandbox"}
+	switch {
+	case env.Isolated():
+		args = append(args, "danger-full-access")
+	case t.Role.ReadOnly():
+		args = append(args, "read-only")
+	default:
+		args = append(args, "workspace-write")
 	}
-	args = append(args, "-C", folder, "-o", outFile, message)
-
-	// output collects stdout, which only repeats the final message, and keeps
-	// the tail of stderr so runError can report why a run failed.
-	if _, err := output(exec.CommandContext(ctx, "codex", args...)); err != nil {
-		return nil, runError("codex", err, "")
+	if t.Role.ReadOnly() {
+		args = append(args, "--ephemeral")
 	}
-	text, err := os.ReadFile(outFile)
-	if err != nil {
-		return nil, err
+	if t.Model != "" {
+		args = append(args, "-m", t.Model)
 	}
-	return json.Marshal(Result{Value: string(text)})
+	args = append(args, "-C", t.Folder, message)
+	return stream("codex", env.Command(ctx, t.Role.ReadOnly(), t.Folder, "codex", args...), t)
 }
