@@ -4,8 +4,10 @@
 package transcript
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
+	"os"
 	"strings"
 )
 
@@ -76,6 +78,25 @@ func (t *Turn) Result() string {
 // Failure returns the reason the CLI gave for a failed turn, or "" if it
 // reported none.
 func (t *Turn) Failure() string { return t.failure }
+
+// ReadFile returns the events of a saved stream, such as a turn's .jsonl
+// round log. It ignores a last line without a newline, which the CLI may
+// still be writing.
+func ReadFile(path string) ([]Event, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+	var t Turn
+	if i := bytes.LastIndexByte(data, '\n'); i >= 0 {
+		for line := range bytes.Lines(data[:i+1]) {
+			if line = bytes.TrimSpace(line); len(line) > 0 {
+				t.Add(line)
+			}
+		}
+	}
+	return t.Events, nil
+}
 
 // Parse returns the events in one line of a Claude Code or Codex stream.
 func Parse(line []byte) []Event {
