@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -48,6 +49,7 @@ func TestParseArgsErrors(t *testing.T) {
 		args []string
 	}{
 		{"no folder", nil},
+		{"two folders", []string{"/a", "/b"}},
 		{"unknown option", []string{"--foo", "/tmp"}},
 		{"unknown backend", []string{"--backend", "gpt", "/tmp"}},
 		{"unknown pattern", []string{"--pattern", "bad", "/tmp"}},
@@ -55,14 +57,23 @@ func TestParseArgsErrors(t *testing.T) {
 		{"pattern without value", []string{"--pattern"}},
 		{"max rounds without value", []string{"--max-rounds"}},
 		{"max rounds not a number", []string{"--max-rounds", "abc", "/tmp"}},
+		{"max rounds trailing junk", []string{"--max-rounds", "5x", "/tmp"}},
 		{"max rounds negative", []string{"--max-rounds", "-1", "/tmp"}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if _, err := parseArgs(tt.args); err == nil {
+			if _, err := parseArgs(tt.args); err == nil || errors.Is(err, errHelp) {
 				t.Errorf("err = %v, want a usage error", err)
 			}
 		})
+	}
+}
+
+func TestParseArgsHelp(t *testing.T) {
+	for _, arg := range []string{"-h", "--help"} {
+		if _, err := parseArgs([]string{arg}); !errors.Is(err, errHelp) {
+			t.Errorf("parseArgs(%q) err = %v, want errHelp", arg, err)
+		}
 	}
 }
 
@@ -142,6 +153,7 @@ func callMain(t *testing.T, args []string, want int) {
 }
 
 func TestMainUsageError(t *testing.T) { callMain(t, nil, 1) }
+func TestMainHelp(t *testing.T)       { callMain(t, []string{"--help"}, 0) }
 func TestMainRunError(t *testing.T)   { callMain(t, []string{"/dev/null"}, 1) }
 
 func TestMainSuccess(t *testing.T) {
