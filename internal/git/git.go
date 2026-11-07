@@ -1,3 +1,4 @@
+// Package git persists Ralph's rounds by committing and pushing the project.
 package git
 
 import (
@@ -6,27 +7,28 @@ import (
 	"strings"
 )
 
-// IsRepo returns true if folder is inside a git work tree.
+// IsRepo reports whether folder is inside a git work tree.
 func IsRepo(folder string) bool {
-	cmd := exec.Command("git", "-C", folder, "rev-parse", "--is-inside-work-tree")
-	cmd.Stdout = nil
-	cmd.Stderr = nil
-	return cmd.Run() == nil
+	return command(folder, "rev-parse", "--is-inside-work-tree").Run() == nil
 }
 
-// HasChanges returns true if the git repo has staged, unstaged, or untracked changes.
+// HasChanges reports whether the repository at folder has staged, unstaged,
+// or untracked changes.
 func HasChanges(folder string) bool {
-	cmd := exec.Command("git", "-C", folder, "status", "--porcelain")
-	out, err := cmd.Output()
-	if err != nil {
-		return false
-	}
-	return len(strings.TrimSpace(string(out))) > 0
+	out, err := command(folder, "status", "--porcelain").Output()
+	return err == nil && len(strings.TrimSpace(string(out))) > 0
 }
 
-// CommitAll stages all repository changes, creates a commit, and pushes if an
-// upstream is configured. It returns whether a commit was created and whether a
-// push was attempted.
+// HasUpstream reports whether the current branch has an upstream configured.
+func HasUpstream(folder string) bool {
+	return command(folder, "rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}").Run() == nil
+}
+
+// CommitAll stages every change in the repository, commits it with message,
+// and pushes if the current branch has an upstream. It reports whether a
+// commit was made and whether it was pushed. If there is nothing to commit,
+// it does nothing. When err is not nil but committed is true, the commit was
+// made and only the push failed.
 func CommitAll(folder, message string) (committed, pushed bool, err error) {
 	if err := run(folder, "add", "-A"); err != nil {
 		return false, false, err
@@ -40,32 +42,29 @@ func CommitAll(folder, message string) (committed, pushed bool, err error) {
 	if !HasUpstream(folder) {
 		return true, false, nil
 	}
-	return true, true, run(folder, "push")
-}
-
-// HasUpstream reports whether the current branch has an upstream configured.
-func HasUpstream(folder string) bool {
-	cmd := exec.Command("git", "-C", folder, "rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}")
-	cmd.Stdout = nil
-	cmd.Stderr = nil
-	return cmd.Run() == nil
+	if err := run(folder, "push"); err != nil {
+		return true, false, err
+	}
+	return true, true, nil
 }
 
 func hasStagedChanges(folder string) bool {
-	cmd := exec.Command("git", "-C", folder, "diff", "--cached", "--quiet")
-	err := cmd.Run()
-	return err != nil
+	// git diff --quiet exits with status 1 when there are differences.
+	return command(folder, "diff", "--cached", "--quiet").Run() != nil
 }
 
+func command(folder string, args ...string) *exec.Cmd {
+	return exec.Command("git", append([]string{"-C", folder}, args...)...)
+}
+
+// run runs a git command and includes its output in any error.
 func run(folder string, args ...string) error {
-	cmd := exec.Command("git", append([]string{"-C", folder}, args...)...)
-	out, err := cmd.CombinedOutput()
+	out, err := command(folder, args...).CombinedOutput()
 	if err == nil {
 		return nil
 	}
-	msg := strings.TrimSpace(string(out))
-	if msg == "" {
-		return err
+	if msg := strings.TrimSpace(string(out)); msg != "" {
+		return fmt.Errorf("git %s: %w: %s", args[0], err, msg)
 	}
-	return fmt.Errorf("%w: %s", err, msg)
+	return fmt.Errorf("git %s: %w", args[0], err)
 }
