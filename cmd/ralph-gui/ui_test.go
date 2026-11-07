@@ -18,6 +18,7 @@ import (
 	"gioui.org/op"
 	"gioui.org/unit"
 
+	"github.com/changkun/ralph/cmd/ralph-gui/internal/trackpad"
 	"github.com/changkun/ralph/internal/backend"
 	"github.com/changkun/ralph/internal/git"
 	"github.com/changkun/ralph/internal/loop"
@@ -322,57 +323,78 @@ func TestFollow(t *testing.T) {
 		t.Errorf("following = %v, position = %+v; want to stop following", u.following, l.Position)
 	}
 
-	// Scrolling back to the end follows again.
+	// Scrolling back to the end follows again. A mouse wheel stops there.
 	s := &u.entryScroll
 	scroll(u, 1000, 500, 1000)
 	frameAt(t, u, now)
 	if !u.following || l.Position.BeforeEnd || s.y != 0 {
 		t.Errorf("following = %v, position = %+v, stretch = %v; want to follow", u.following, l.Position, s.y)
 	}
-
-	// Scrolling past the end stretches the content, less and less.
 	scroll(u, 1000, 500, 100)
+	frameAt(t, u, now)
+	if s.y != 0 {
+		t.Errorf("stretch = %v; want a mouse wheel to stop at the end", s.y)
+	}
+
+	// Fingers on a trackpad stretch the content past the end, less and
+	// less, and hold it there.
+	tp := fakeTrackpad(t, u)
+	tp.swipe(100)
 	frameAt(t, u, now)
 	y := s.y
 	if y <= 0 || y >= 100 {
 		t.Errorf("stretch = %v; want less than the 100 scrolled", y)
 	}
-	scroll(u, 1000, 500, 100)
+	tp.swipe(100)
 	frameAt(t, u, now)
 	if s.y <= y || s.y-y >= y {
 		t.Errorf("stretch = %v after %v; want it a little further", s.y, y)
 	}
+	now = now.Add(time.Second)
+	frameAt(t, u, now)
+	if s.y == 0 {
+		t.Error("the stretch sprang back while the fingers held it")
+	}
 
-	// Scrolling back first undoes the stretch.
+	// Moving back first undoes the stretch.
 	position, y := l.Position, s.y
-	scroll(u, 1000, 500, -20)
+	tp.swipe(-20)
 	frameAt(t, u, now)
 	if s.y >= y || l.Position.First != position.First || l.Position.Offset != position.Offset {
 		t.Errorf("stretch = %v after %v, position = %+v; want less stretch, the list still", s.y, y, l.Position)
 	}
 
-	// Once the scrolling stops, the stretch springs back.
+	// Once the fingers lift, the stretch springs back, and their momentum
+	// is ignored.
+	tp.lift()
+	position = l.Position
 	for i := range 40 {
-		frameAt(t, u, now.Add(time.Second+time.Duration(i)*16*time.Millisecond))
+		if i < 10 {
+			tp.coast(50)
+		}
+		frameAt(t, u, now.Add(time.Duration(i)*16*time.Millisecond))
 	}
-	if s.y != 0 || s.v != 0 {
-		t.Errorf("stretch = %v, velocity = %v; want them back at 0", s.y, s.v)
+	if s.y != 0 || s.v != 0 || l.Position.First != position.First || l.Position.Offset != position.Offset {
+		t.Errorf("stretch = %v, velocity = %v, position = %+v; want them back at 0, the list still", s.y, s.v, l.Position)
 	}
 
-	// Reaching the end at speed bounces, and the rest of that scroll is
+	// Momentum that reaches the end bounces off it, and the rest of it is
 	// ignored.
 	now = now.Add(2 * time.Second)
+	scroll(u, 1000, 500, -100)
+	tp.swipe(30)
+	tp.lift()
 	frameAt(t, u, now)
 	peak := float32(0)
 	for i := 1; i <= 40; i++ {
 		if i <= 10 {
-			scroll(u, 1000, 500, 80)
+			tp.coast(40)
 		}
 		frameAt(t, u, now.Add(time.Duration(i)*16*time.Millisecond))
 		peak = max(peak, s.y)
 	}
-	if !s.bouncing || peak <= 0 || peak > 100 || s.y != 0 {
-		t.Errorf("bouncing = %v, peak = %v, stretch = %v; want a bounce that settled", s.bouncing, peak, s.y)
+	if peak <= 0 || peak > 100 || s.y != 0 || !u.following {
+		t.Errorf("peak = %v, stretch = %v, following = %v; want a bounce that settled at the end", peak, s.y, u.following)
 	}
 
 	// Short content starts at the top.
@@ -387,21 +409,73 @@ func TestFollow(t *testing.T) {
 	}
 
 	// Pulling it down, even from below the content, stretches it.
-	scroll(u, 1000, 600, -100)
+	tp.at = f32.Pt(1000, 600)
+	tp.swipe(-100)
 	frameAt(t, u, now)
 	if s.y >= 0 {
 		t.Errorf("stretch = %v; want the content pulled down", s.y)
 	}
+	tp.lift()
 
 	// Once it no longer fits, the view moves to its end.
 	write(t, filepath.Join(folder, session.LocalDir, "engine.log"), "one line\n"+log.String())
 	u.poll()
-	for range 2 {
-		frameAt(t, u, now)
+	for i := range 40 {
+		frameAt(t, u, now.Add(time.Duration(i)*16*time.Millisecond))
 	}
-	if !u.following || l.Position.BeforeEnd || atTop() {
-		t.Errorf("following = %v, position = %+v; want the end", u.following, l.Position)
+	if !u.following || l.Position.BeforeEnd || atTop() || s.y != 0 {
+		t.Errorf("following = %v, position = %+v, stretch = %v; want the end", u.following, l.Position, s.y)
 	}
+}
+
+// fakePad scrolls a UI as fingers on a trackpad do.
+type fakePad struct {
+	u       *UI
+	at      f32.Point
+	time    time.Duration
+	down    bool
+	gesture uint64
+	phases  map[time.Duration]trackpad.Event
+}
+
+// fakeTrackpad makes scroll events carry the phases that a real trackpad
+// gives them.
+func fakeTrackpad(t *testing.T, u *UI) *fakePad {
+	tp := &fakePad{u: u, at: f32.Pt(1000, 500), time: time.Second, phases: map[time.Duration]trackpad.Event{}}
+	phaseOf, gesture := scrollPhaseOf, scrollGesture
+	t.Cleanup(func() { scrollPhaseOf, scrollGesture = phaseOf, gesture })
+	scrollPhaseOf = func(t time.Duration) (trackpad.Event, bool) {
+		e, ok := tp.phases[t]
+		return e, ok
+	}
+	scrollGesture = func() (bool, uint64) { return tp.down, tp.gesture }
+	return tp
+}
+
+// swipe moves the fingers dy pixels, putting them down first if they are
+// up.
+func (tp *fakePad) swipe(dy float32) {
+	ph := trackpad.Changed
+	if !tp.down {
+		tp.down, ph = true, trackpad.Began
+		tp.gesture++
+	}
+	tp.scroll(dy, trackpad.Event{Finger: ph, Gesture: tp.gesture})
+}
+
+// lift lifts the fingers. The event saying so scrolls nothing, and Gio
+// drops it.
+func (tp *fakePad) lift() { tp.down = false }
+
+// coast scrolls dy pixels with the momentum of the latest gesture.
+func (tp *fakePad) coast(dy float32) {
+	tp.scroll(dy, trackpad.Event{Momentum: trackpad.Changed, Gesture: tp.gesture})
+}
+
+func (tp *fakePad) scroll(dy float32, e trackpad.Event) {
+	tp.time += 16 * time.Millisecond
+	tp.phases[tp.time] = e
+	tp.u.testRouter().Queue(pointer.Event{Kind: pointer.Scroll, Source: pointer.Mouse, Position: tp.at, Scroll: f32.Pt(0, dy), Time: tp.time})
 }
 
 func TestStretch(t *testing.T) {

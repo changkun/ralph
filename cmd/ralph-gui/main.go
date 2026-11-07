@@ -18,6 +18,7 @@ import (
 	"gioui.org/app"
 	"gioui.org/unit"
 
+	"github.com/changkun/ralph/cmd/ralph-gui/internal/trackpad"
 	"github.com/changkun/ralph/internal/session"
 )
 
@@ -48,5 +49,6 @@ func main() {
 		}
 		os.Exit(0)
 	}()
+	trackpad.Watch()
 	app.Main()
 }
