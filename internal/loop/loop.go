@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/changkun/ralph/internal/backend"
 	"github.com/changkun/ralph/internal/git"
@@ -129,20 +130,18 @@ func finishRound(folder string, round int, summary string) {
 	fmt.Println()
 }
 
+// commitMessage builds a one-line commit subject from the first line of the
+// round's summary, shortened to at most 60 characters.
 func commitMessage(summary string) string {
-	line := strings.TrimSpace(summary)
-	if line == "" {
-		return "ralph: update project"
-	}
-	line = strings.Split(line, "\n")[0]
-	line = strings.Join(strings.Fields(line), " ")
-	line = strings.Trim(line, "-: ")
-	if line == "" {
-		return "ralph: update project"
-	}
+	const fallback = "ralph: update project"
 	const maxLen = 60
-	if len(line) > maxLen {
-		line = strings.TrimSpace(line[:maxLen])
+	line, _, _ := strings.Cut(strings.TrimSpace(summary), "\n")
+	line = strings.Trim(strings.Join(strings.Fields(line), " "), "-: ")
+	if line == "" {
+		return fallback
+	}
+	if utf8.RuneCountInString(line) > maxLen {
+		line = strings.TrimSpace(string([]rune(line)[:maxLen]))
 	}
 	return "ralph: " + line
 }
