@@ -58,10 +58,10 @@ Ralph keeps two logs per turn in the folder's `.ralph/` directory:
 
 Because Ralph commits with `git add -A`, these logs are committed along with the project unless `.ralph/` is in the project's `.gitignore`. The exception is `.ralph/local/`, described under [The desktop app](#the-desktop-app), which Ralph lists in the repository's `.git/info/exclude` so that it is never committed.
 
-- **Skipped rounds.** If the strategist (or the standalone agent) produces no output, Ralph skips the round and starts the next one. Skipped rounds still count toward `--max-rounds`.
+- **Skipped rounds.** If the strategist (or the standalone agent) produces no output, Ralph skips the round and starts the next one. Skipped rounds still count toward `--rounds`.
 - **Failures.** If an agent's CLI fails, for example because it is not signed in, Ralph stops and prints the error.
 - **Stopping.** Ctrl-C, or Stop in the desktop app, stops the running agent, removes the containers, and exits. Changes from an unfinished round stay uncommitted in the working tree.
-- **Resuming.** On start, Ralph continues after the last round of the selected pattern that finished. `--max-rounds` counts those earlier rounds: if five rounds have finished, `--max-rounds 8` runs three more.
+- **Resuming.** On start, Ralph continues after the last round of the selected pattern that finished. `--rounds` counts only the rounds of this run: if five rounds have finished, `--rounds 3` runs rounds 6 to 8, and running it again runs 9 to 11.
 
 ## Running agents in a container
 
@@ -88,9 +88,9 @@ On Linux, Podman maps your user to the agents' user, so files they create belong
 `ralph-gui` runs sessions like `ralph` does, with settings for each role and a live view of the agents' work:
 
 1. Choose a project folder. Ralph makes it a git repository if it is not one.
-2. Choose where agents run (Podman, Docker, or this machine), the pattern, and optionally the last round.
+2. Choose where agents run (Podman, Docker, or this machine) and the pattern.
 3. For each role in the pattern, choose Claude Code or Codex and a model, and edit its system prompt and prompt if you like. Prompts are Go templates; Reset restores the built-in ones.
-4. Press Start. The app checks the settings and logins, then runs the session in a background process, so it keeps running if you quit the app; open the folder again to follow it. Stop ends it.
+4. Press Start, after setting how many rounds it runs if you like; left empty, the session runs until you stop it. Once rounds have finished, the button reads Continue and runs that many more. The app checks the settings and logins, then runs the session in a background process, so it keeps running if you quit the app; open the folder again to follow it. Stop ends it.
 5. Watch each turn: the app lists the rounds and turns, and shows the selected turn's messages, reasoning, tool calls, commands, and results as they happen. With *Follow the session* checked, it moves to each new turn by itself. The engine log shows the session's console output, including the first image build and any error.
 
 The app keeps its files in the project's `.ralph/local/`: the settings (`config.json`, leaving out prompts equal to the built-in ones), the session's state (`status.json`), and the engine log (`engine.log`). Agents in a container cannot see this folder, which is replaced by an empty one in their view, and Ralph never commits it.
@@ -130,8 +130,8 @@ go build -o ralph-gui ./cmd/ralph-gui
 ./ralph --pattern standalone /path/to/project
 ./ralph --pattern think+act+evaluator+archivist /path/to/project
 
-# Stop after round 5
-./ralph --max-rounds 5 /path/to/project
+# Run five rounds, then stop; run it again to continue
+./ralph --rounds 5 /path/to/project
 ```
 
 | Option | Default | Description |
@@ -140,7 +140,7 @@ go build -o ralph-gui ./cmd/ralph-gui
 | `--backend claude\|codex` | `claude` | Agent CLI to run |
 | `--model NAME` | the CLI's default | Model for every role |
 | `--pattern NAME` | `think+act` | Roles in each round; see [Roles and patterns](#roles-and-patterns) |
-| `--max-rounds N` | `0` (no limit) | Stop after round N, counting rounds from earlier runs |
+| `--rounds N` | `0` (no limit) | Run N rounds after those already finished, then stop |
 | `-h`, `--help` | | Show usage |
 
 The command-line tool runs every role with the same backend, model, and built-in prompts. To set them per role, use the desktop app.

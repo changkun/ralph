@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"image"
 	"image/color"
+	"strconv"
 	"strings"
 
 	"gioui.org/font"
@@ -243,17 +244,6 @@ func (u *UI) layoutSidebar(gtx C) D {
 			}
 			return layout.Flex{Axis: layout.Vertical}.Layout(gtx, children...)
 		}),
-		u.heading("Rounds"),
-		u.enabled(func(gtx C) D {
-			return layout.Flex{Alignment: layout.Middle}.Layout(gtx,
-				layout.Rigid(func(gtx C) D {
-					gtx.Constraints.Max.X = gtx.Dp(96)
-					return u.editor(gtx, &u.rounds, "no limit", false)
-				}),
-				layout.Rigid(space(10)),
-				layout.Flexed(1, u.text(14, muted, "Stop after this round. Empty means no limit.").Layout),
-			)
-		}),
 	}
 	for _, role := range loop.Pattern(u.pattern.Value).Roles() {
 		items = append(items, u.heading(roleTitle(role)), u.enabled(func(gtx C) D { return u.layoutRole(gtx, role) }))
@@ -270,14 +260,18 @@ func (u *UI) layoutSidebar(gtx C) D {
 	})
 }
 
-// layoutControls lays out the Start and Stop buttons, the session's state,
-// and any problem.
+// layoutControls lays out the Start and Stop buttons, how many rounds a
+// start runs, the session's state, and any problem.
 func (u *UI) layoutControls(gtx C) D {
 	active := u.active()
 	status, bad := u.statusText()
 	statusColor := ink
 	if bad {
 		statusColor = danger
+	}
+	start := "Start"
+	if u.finished > 0 {
+		start = "Continue"
 	}
 	children := []layout.FlexChild{
 		layout.Rigid(space(18)),
@@ -287,9 +281,19 @@ func (u *UI) layoutControls(gtx C) D {
 					if active || u.folder == "" {
 						gtx = gtx.Disabled()
 					}
-					return u.button(gtx, &u.startBtn, "Start", go_)
+					return u.button(gtx, &u.startBtn, start, go_)
 				}),
+				layout.Rigid(space(10)),
+				layout.Rigid(u.text(15, ink, "for").Layout),
 				layout.Rigid(space(8)),
+				layout.Rigid(u.enabled(func(gtx C) D {
+					gtx.Constraints.Min.X = gtx.Dp(64)
+					gtx.Constraints.Max.X = gtx.Dp(64)
+					return u.editor(gtx, &u.rounds, "all", false)
+				})),
+				layout.Rigid(space(8)),
+				layout.Rigid(u.text(15, ink, "rounds").Layout),
+				layout.Flexed(1, space(8)),
 				layout.Rigid(func(gtx C) D {
 					if !active {
 						gtx = gtx.Disabled()
@@ -299,8 +303,11 @@ func (u *UI) layoutControls(gtx C) D {
 			)
 		}),
 		layout.Rigid(space(10)),
-		layout.Rigid(u.text(15, statusColor, status).Layout),
 	}
+	if !active {
+		children = append(children, layout.Rigid(u.text(14, muted, u.roundsText()).Layout), layout.Rigid(space(4)))
+	}
+	children = append(children, layout.Rigid(u.text(15, statusColor, status).Layout))
 	for _, problem := range []string{u.message, errText(u.invalid)} {
 		if problem != "" {
 			children = append(children, layout.Rigid(space(6)), layout.Rigid(u.text(14, danger, problem).Layout))
@@ -311,6 +318,18 @@ func (u *UI) layoutControls(gtx C) D {
 			layout.Rigid(u.text(14, muted, "Settings can be changed once the session stops.").Layout))
 	}
 	return layout.Flex{Axis: layout.Vertical}.Layout(gtx, children...)
+}
+
+// roundsText says which rounds a start runs.
+func (u *UI) roundsText() string {
+	n, _ := strconv.Atoi(u.rounds.Text())
+	switch {
+	case n == 0:
+		return "Runs until you stop it."
+	case n == 1:
+		return fmt.Sprintf("Runs round %d, then stops.", u.finished+1)
+	}
+	return fmt.Sprintf("Runs rounds %d to %d, then stops.", u.finished+1, u.finished+n)
 }
 
 func errText(err error) string {
