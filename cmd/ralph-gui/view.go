@@ -586,11 +586,40 @@ func (u *UI) layoutEntry(gtx C, i int) D {
 			return leftBar(gtx, c, u.text(15, ink, e.text).Layout)
 		})
 	case entryConsole:
-		return layout.Inset{Top: 12}.Layout(gtx, func(gtx C) D {
-			return boxed(gtx, codeBg, codeLine, 12, u.code(13, ink, e.text).Layout)
-		})
+		return u.layoutConsoleLine(gtx, e)
 	}
 	return layout.Inset{Left: gutter, Top: 5, Bottom: 5}.Layout(gtx, func(gtx C) D { return u.layoutEvent(gtx, i, e) })
+}
+
+// layoutConsoleLine lays out a line of the console as part of a box that
+// runs from its first line to its last. Each line is an entry of its own so
+// that a long console costs only the lines in view.
+func (u *UI) layoutConsoleLine(gtx C, e entry) D {
+	var margin, top, bottom unit.Dp
+	if e.first {
+		margin, top = 12, 10
+	}
+	if e.last {
+		bottom = 10
+	}
+	return layout.Inset{Top: margin}.Layout(gtx, func(gtx C) D {
+		gtx.Constraints.Min.X = gtx.Constraints.Max.X
+		m := op.Record(gtx.Ops)
+		dims := layout.Inset{Left: 12, Right: 12, Top: top, Bottom: bottom}.Layout(gtx, u.code(13, ink, e.text).Layout)
+		call := m.Stop()
+		r, w := dims.Size, max(1, gtx.Dp(1))
+		fillRect(gtx, image.Rectangle{Max: r}, codeBg)
+		fillRect(gtx, image.Rect(0, 0, w, r.Y), codeLine)
+		fillRect(gtx, image.Rect(r.X-w, 0, r.X, r.Y), codeLine)
+		if e.first {
+			fillRect(gtx, image.Rect(0, 0, r.X, w), codeLine)
+		}
+		if e.last {
+			fillRect(gtx, image.Rect(0, r.Y-w, r.X, r.Y), codeLine)
+		}
+		call.Add(gtx.Ops)
+		return dims
+	})
 }
 
 // layoutTurnHeading lays out a turn's heading, as Slack shows who wrote a
