@@ -335,11 +335,16 @@ func indent(raw json.RawMessage) string {
 	if json.Unmarshal(raw, &v) != nil {
 		return string(raw)
 	}
-	b, err := json.MarshalIndent(v, "", "  ")
-	if err != nil {
+	// Encode without HTML escapes, so that a command like "a > b" reads
+	// as written.
+	var b strings.Builder
+	enc := json.NewEncoder(&b)
+	enc.SetEscapeHTML(false)
+	enc.SetIndent("", "  ")
+	if enc.Encode(v) != nil {
 		return string(raw)
 	}
-	return string(b)
+	return strings.TrimSuffix(b.String(), "\n")
 }
 
 func seconds(ms int) string { return fmt.Sprintf("%.1fs", float64(ms)/1000) }
