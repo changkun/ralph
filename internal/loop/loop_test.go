@@ -215,6 +215,14 @@ func TestRunRequiresAnAgentPerRole(t *testing.T) {
 	}
 }
 
+func TestRunRefusesThinkers(t *testing.T) {
+	be := &fakeBackend{}
+	err := Run(context.Background(), config(be, Thinkers, t.TempDir(), 1), 0)
+	if err == nil || len(be.turns) != 0 {
+		t.Errorf("err = %v, turns = %d; want an error and no turns", err, len(be.turns))
+	}
+}
+
 func TestRunTemplateError(t *testing.T) {
 	// The template renders for an empty round but fails on this objective.
 	tmpl, err := prompt.Parse(prompt.Text{Prompt: `{{if .Objective}}{{index .Objective 99}}{{end}}`})

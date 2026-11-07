@@ -66,6 +66,9 @@ func Run(ctx context.Context, cfg Config, finished int) error {
 	if cfg.AgentFolder == "" {
 		cfg.AgentFolder = cfg.Folder
 	}
+	if cfg.Pattern == Thinkers {
+		return fmt.Errorf("the %s pattern does not run in rounds", Thinkers)
+	}
 	for _, role := range cfg.Pattern.Roles() {
 		if cfg.Agents[role].Backend == nil {
 			return fmt.Errorf("no agent configured for the %s role", role)

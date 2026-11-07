@@ -25,6 +25,7 @@ func TestParsePattern(t *testing.T) {
 			"think+act+tester+documenter", "think-act-tester-documenter",
 			"think_act_tester_documenter", "full-pipeline", "pipeline",
 		}, ThinkActEvaluatorArchivist},
+		{[]string{"thinkers"}, Thinkers},
 	}
 	for _, tt := range tests {
 		for _, name := range tt.names {
