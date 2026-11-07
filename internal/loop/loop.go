@@ -271,12 +271,13 @@ func finishRound(out io.Writer, folder string, round int, summary string) {
 }
 
 // commitMessage builds a one-line commit subject from the first line of the
-// round's summary, shortened to at most 60 characters.
+// round's summary, without Markdown list, heading, quote, or emphasis
+// marks around it, shortened to at most 60 characters.
 func commitMessage(summary string) string {
 	const fallback = "ralph: update project"
 	const maxLen = 60
 	line, _, _ := strings.Cut(strings.TrimSpace(summary), "\n")
-	line = strings.Trim(strings.Join(strings.Fields(line), " "), "-: ")
+	line = strings.Trim(strings.Join(strings.Fields(line), " "), "-:*_#> ")
 	if line == "" {
 		return fallback
 	}

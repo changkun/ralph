@@ -398,6 +398,8 @@ func TestCommitMessage(t *testing.T) {
 		{"- : -", "ralph: update project"},
 		{"Add a CLI", "ralph: Add a CLI"},
 		{"- Add   a\tCLI:\nwith details", "ralph: Add a CLI"},
+		{"**Objective: Add `hello.py`.**", "ralph: Objective: Add `hello.py`."},
+		{"## Add a CLI", "ralph: Add a CLI"},
 		{long, "ralph: " + long[:60]},
 		{wide, "ralph: " + strings.Repeat("é", 60)},
 	}
