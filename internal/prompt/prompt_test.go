@@ -21,7 +21,7 @@ func TestPrompts(t *testing.T) {
 		wantSystem bool
 		wantUser   []string
 	}{
-		{"strategist", Strategist(), false, []string{"ONE objective"}},
+		{"strategist", Strategist(), true, []string{"ONE objective"}},
 		{"executor", Executor(round), true, []string{round.Folder, round.Objective}},
 		{"evaluator", Evaluator(round), true, []string{round.Folder, round.Objective, round.ExecutorResult}},
 		{"archivist", Archivist(round), true, []string{round.Folder, round.Objective, round.ExecutorResult, round.EvaluatorResult, round.MemoryFile}},

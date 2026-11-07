@@ -13,8 +13,8 @@ import (
 type Codex struct{}
 
 // Run implements Backend. Codex runs in the workspace-write sandbox, so the
-// agent can edit files in folder. Strategist turns are ephemeral: Codex does
-// not persist their sessions.
+// agent can edit files in folder. A read-only role, the strategist, runs in
+// the read-only sandbox instead, and its session is not persisted.
 func (*Codex) Run(ctx context.Context, role Role, folder string, p prompt.Prompt) ([]byte, error) {
 	// codex exec writes the agent's final message to the file named by -o.
 	f, err := os.CreateTemp("", "ralph-*.txt")
@@ -32,8 +32,8 @@ func (*Codex) Run(ctx context.Context, role Role, folder string, p prompt.Prompt
 	}
 
 	args := []string{"exec", "--sandbox", "workspace-write"}
-	if role == Strategist {
-		args = append(args, "--ephemeral")
+	if role.readOnly() {
+		args = []string{"exec", "--sandbox", "read-only", "--ephemeral"}
 	}
 	args = append(args, "-C", folder, "-o", outFile, message)
 
