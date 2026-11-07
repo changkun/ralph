@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/changkun/ralph/internal/backend"
+	"github.com/changkun/ralph/internal/loop"
 	"github.com/changkun/ralph/internal/prompt"
 )
 
@@ -16,159 +17,147 @@ func TestParseArgs(t *testing.T) {
 	tests := []struct {
 		name    string
 		args    []string
-		wantErr bool
-		be      string
+		backend string
+		pattern loop.Pattern
 		rounds  int
-		pattern string
 	}{
-		{"default", []string{"/tmp"}, false, "claude", 0, "think+act"},
-		{"codex", []string{"--backend", "codex", "/tmp"}, false, "codex", 0, "think+act"},
-		{"rounds", []string{"--max-rounds", "5", "/tmp"}, false, "claude", 5, "think+act"},
-		{"standalone", []string{"--pattern", "standalone", "/tmp"}, false, "claude", 0, "standalone"},
-		{"builder alias", []string{"--pattern", "builder", "/tmp"}, false, "claude", 0, "standalone"},
-		{"think-act alias", []string{"--pattern", "think-act", "/tmp"}, false, "claude", 0, "think+act"},
-		{"strategist-executor alias", []string{"--pattern", "strategist-executor", "/tmp"}, false, "claude", 0, "think+act"},
-		{"evaluator", []string{"--pattern", "think+act+evaluator", "/tmp"}, false, "claude", 0, "think+act+evaluator"},
-		{"tester alias", []string{"--pattern", "think+act+tester", "/tmp"}, false, "claude", 0, "think+act+evaluator"},
-		{"archivist", []string{"--pattern", "think+act+evaluator+archivist", "/tmp"}, false, "claude", 0, "think+act+evaluator+archivist"},
-		{"documenter alias", []string{"--pattern", "think+act+tester+documenter", "/tmp"}, false, "claude", 0, "think+act+evaluator+archivist"},
-		{"pipeline alias", []string{"--pattern", "pipeline", "/tmp"}, false, "claude", 0, "think+act+evaluator+archivist"},
-		{"no folder", []string{}, true, "", 0, ""},
-		{"bad backend", []string{"--backend", "gpt", "/tmp"}, true, "", 0, ""},
-		{"bad pattern", []string{"--pattern", "bad", "/tmp"}, true, "", 0, ""},
-		{"pattern no val", []string{"--pattern"}, true, "", 0, ""},
-		{"unknown flag", []string{"--foo"}, true, "", 0, ""},
-		{"backend no val", []string{"--backend"}, true, "", 0, ""},
-		{"rounds no val", []string{"--max-rounds"}, true, "", 0, ""},
-		{"rounds bad", []string{"--max-rounds", "abc", "/tmp"}, true, "", 0, ""},
-		{"rounds neg", []string{"--max-rounds", "-1", "/tmp"}, true, "", 0, ""},
+		{"defaults", []string{"/tmp"}, "claude", loop.ThinkAct, 0},
+		{"codex", []string{"--backend", "codex", "/tmp"}, "codex", loop.ThinkAct, 0},
+		{"max rounds", []string{"--max-rounds", "5", "/tmp"}, "claude", loop.ThinkAct, 5},
+		{"options after folder", []string{"/tmp", "--max-rounds", "5"}, "claude", loop.ThinkAct, 5},
+		{"standalone", []string{"--pattern", "standalone", "/tmp"}, "claude", loop.Standalone, 0},
+		{"legacy pattern", []string{"--pattern", "builder", "/tmp"}, "claude", loop.Standalone, 0},
+		{"full pipeline", []string{"--pattern", "think+act+evaluator+archivist", "/tmp"}, "claude", loop.ThinkActEvaluatorArchivist, 0},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			cfg, err := parseArgs(tt.args)
-			if (err != nil) != tt.wantErr {
-				t.Fatalf("err=%v, wantErr=%v", err, tt.wantErr)
+			if err != nil {
+				t.Fatal(err)
 			}
-			if err == nil {
-				if cfg.backendName != tt.be {
-					t.Errorf("backend=%q", cfg.backendName)
-				}
-				if cfg.maxRounds != tt.rounds {
-					t.Errorf("rounds=%d", cfg.maxRounds)
-				}
-				if cfg.pattern != tt.pattern {
-					t.Errorf("pattern=%q", cfg.pattern)
-				}
+			if cfg.backendName != tt.backend || cfg.pattern != tt.pattern || cfg.maxRounds != tt.rounds || cfg.folder != "/tmp" {
+				t.Errorf("got %+v", cfg)
 			}
 		})
 	}
 }
 
-type runMock struct{}
-
-func (m *runMock) RunThinker(ctx context.Context, _ string, _ prompt.Prompt) ([]byte, error) {
-	if ctx.Err() != nil {
-		return nil, ctx.Err()
+func TestParseArgsErrors(t *testing.T) {
+	tests := []struct {
+		name string
+		args []string
+	}{
+		{"no folder", nil},
+		{"unknown option", []string{"--foo", "/tmp"}},
+		{"unknown backend", []string{"--backend", "gpt", "/tmp"}},
+		{"unknown pattern", []string{"--pattern", "bad", "/tmp"}},
+		{"backend without value", []string{"--backend"}},
+		{"pattern without value", []string{"--pattern"}},
+		{"max rounds without value", []string{"--max-rounds"}},
+		{"max rounds not a number", []string{"--max-rounds", "abc", "/tmp"}},
+		{"max rounds negative", []string{"--max-rounds", "-1", "/tmp"}},
 	}
-	return []byte(`{"result":"idea"}`), nil
-}
-func (m *runMock) RunWorker(ctx context.Context, _ string, _ prompt.Prompt) ([]byte, error) {
-	if ctx.Err() != nil {
-		return nil, ctx.Err()
-	}
-	return []byte(`{"result":"done"}`), nil
-}
-func (m *runMock) RunArchivist(ctx context.Context, _ string, _ prompt.Prompt) ([]byte, error) {
-	if ctx.Err() != nil {
-		return nil, ctx.Err()
-	}
-	return []byte(`{"result":"documented"}`), nil
-}
-
-var _ backend.Backend = (*runMock)(nil)
-
-func TestRunStrategistExecutor(t *testing.T) {
-	err := run(context.Background(), config{backendName: "claude", pattern: "think+act", maxRounds: 1, folder: t.TempDir()}, &runMock{})
-	if err != nil {
-		t.Fatal(err)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if _, err := parseArgs(tt.args); err == nil {
+				t.Errorf("err = %v, want a usage error", err)
+			}
+		})
 	}
 }
 
-func TestRunThinkActEvaluator(t *testing.T) {
-	err := run(context.Background(), config{backendName: "claude", pattern: "think+act+evaluator", maxRounds: 1, folder: t.TempDir()}, &runMock{})
-	if err != nil {
-		t.Fatal(err)
+// stubBackend answers every role with "ok", or with ctx's error once ctx is
+// cancelled.
+type stubBackend struct{}
+
+func (stubBackend) Run(ctx context.Context, _ backend.Role, _ string, _ prompt.Prompt) ([]byte, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	return json.Marshal(backend.Result{Value: "ok"})
+}
+
+func (stubBackend) MemoryFile() string { return "MEMORY.md" }
+
+func TestRun(t *testing.T) {
+	for _, p := range loop.Patterns {
+		t.Run(string(p), func(t *testing.T) {
+			dir := t.TempDir()
+			if err := run(context.Background(), config{backendName: "claude", pattern: p, maxRounds: 1, folder: dir}, stubBackend{}); err != nil {
+				t.Fatal(err)
+			}
+			if got := loop.ResumeRound(filepath.Join(dir, ".ralph"), p); got != 1 {
+				t.Errorf("finished rounds = %d, want 1", got)
+			}
+		})
 	}
 }
 
-func TestRunThinkActEvaluatorArchivist(t *testing.T) {
-	err := run(context.Background(), config{backendName: "claude", pattern: "think+act+evaluator+archivist", maxRounds: 1, folder: t.TempDir()}, &runMock{})
-	if err != nil {
-		t.Fatal(err)
-	}
-}
-
-func TestRunStandalone(t *testing.T) {
-	err := run(context.Background(), config{backendName: "claude", pattern: "standalone", maxRounds: 1, folder: t.TempDir()}, &runMock{})
-	if err != nil {
-		t.Fatal(err)
-	}
-}
-
-func TestRunUnlimited(t *testing.T) {
+func TestRunInterrupted(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	if err := run(ctx, config{backendName: "claude", maxRounds: 0, folder: t.TempDir()}, &runMock{}); err != nil {
+	if err := run(ctx, config{backendName: "claude", pattern: loop.ThinkAct, folder: t.TempDir()}, stubBackend{}); err != nil {
 		t.Fatal(err)
 	}
 }
 
-func TestRunResume(t *testing.T) {
+func TestRunResumes(t *testing.T) {
 	dir := t.TempDir()
-	rd := filepath.Join(dir, ".ralph")
-	os.MkdirAll(rd, 0o755)
-	for i := 1; i <= 3; i++ {
-		data, _ := json.Marshal(backend.Result{Value: fmt.Sprintf("idea%d", i)})
-		os.WriteFile(filepath.Join(rd, fmt.Sprintf("round-%03d-strategist.json", i)), data, 0o644)
-		os.WriteFile(filepath.Join(rd, fmt.Sprintf("round-%03d-executor.json", i)), data, 0o644)
-	}
-	if err := run(context.Background(), config{backendName: "claude", maxRounds: 4, folder: dir}, &runMock{}); err != nil {
+	ralphDir := filepath.Join(dir, ".ralph")
+	if err := os.MkdirAll(ralphDir, 0o755); err != nil {
 		t.Fatal(err)
+	}
+	for i := 1; i <= 3; i++ {
+		for _, role := range []string{"strategist", "executor"} {
+			if err := os.WriteFile(filepath.Join(ralphDir, fmt.Sprintf("round-%03d-%s.json", i, role)), []byte(`{}`), 0o644); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	if err := run(context.Background(), config{backendName: "claude", pattern: loop.ThinkAct, maxRounds: 4, folder: dir}, stubBackend{}); err != nil {
+		t.Fatal(err)
+	}
+	if got := loop.ResumeRound(ralphDir, loop.ThinkAct); got != 4 {
+		t.Errorf("finished rounds = %d, want 4", got)
 	}
 }
 
-func TestRunMkdirErr(t *testing.T) {
-	if err := run(context.Background(), config{folder: "/dev/null"}, &runMock{}); err == nil {
-		t.Error("expected error")
+func TestRunCannotCreateLogDir(t *testing.T) {
+	if err := run(context.Background(), config{pattern: loop.ThinkAct, folder: "/dev/null"}, stubBackend{}); err == nil {
+		t.Error("expected an error")
 	}
 }
 
 func callMain(t *testing.T, args []string, want int) {
 	t.Helper()
-	orig, origExit := os.Args, osExit
-	defer func() { os.Args, osExit = orig, origExit }()
-	var code int
-	osExit = func(c int) { code = c; panic("exit") }
+	origArgs, origExit := os.Args, osExit
+	defer func() { os.Args, osExit = origArgs, origExit }()
+	code := -1
+	osExit = func(c int) { code = c }
 	os.Args = append([]string{"ralph"}, args...)
-	func() { defer func() { recover() }(); main() }()
+	main()
 	if code != want {
 		t.Errorf("exit code = %d, want %d", code, want)
 	}
 }
 
-func TestMainParseErr(t *testing.T) { callMain(t, nil, 1) }
-func TestMainRunErr(t *testing.T)   { callMain(t, []string{"/dev/null"}, 1) }
+func TestMainUsageError(t *testing.T) { callMain(t, nil, 1) }
+func TestMainRunError(t *testing.T)   { callMain(t, []string{"/dev/null"}, 1) }
+
 func TestMainSuccess(t *testing.T) {
-	dir := t.TempDir()
-	fakeDir := t.TempDir()
-	os.WriteFile(filepath.Join(fakeDir, "claude"), []byte("#!/bin/sh\necho '{\"result\":\"x\"}'"), 0o755)
-	t.Setenv("PATH", fakeDir+":"+os.Getenv("PATH"))
-	callMain(t, []string{"--max-rounds", "1", dir}, 0)
+	bin := t.TempDir()
+	if err := os.WriteFile(filepath.Join(bin, "claude"), []byte("#!/bin/sh\necho '{\"result\":\"x\"}'\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	callMain(t, []string{"--max-rounds", "1", t.TempDir()}, 0)
 }
 
 func TestMainAgentFailure(t *testing.T) {
-	fakeDir := t.TempDir()
-	os.WriteFile(filepath.Join(fakeDir, "claude"), []byte("#!/bin/sh\nexit 1\n"), 0o755)
-	t.Setenv("PATH", fakeDir+":"+os.Getenv("PATH"))
+	bin := t.TempDir()
+	if err := os.WriteFile(filepath.Join(bin, "claude"), []byte("#!/bin/sh\nexit 1\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
 	callMain(t, []string{"--max-rounds", "1", t.TempDir()}, 1)
 }

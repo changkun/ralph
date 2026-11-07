@@ -1,3 +1,6 @@
+// Package loop runs Ralph's rounds. A round runs the roles of a pattern in
+// order, then commits the project and pushes it if the branch has an
+// upstream.
 package loop
 
 import (
@@ -15,94 +18,117 @@ import (
 
 const separator = "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 
-// RunThinkAct executes the two-role strategist/executor loop. It stops after
-// round maxRounds (0 means no limit), when ctx is cancelled, or when an
-// agent's CLI fails; only the last case returns an error.
-func RunThinkAct(ctx context.Context, be backend.Backend, folder, ralphDir string, round *int, maxRounds int) error {
-	return runPipeline(ctx, be, folder, ralphDir, "", round, maxRounds, false, false)
+// stages names what each role is doing, for the round banners.
+var stages = map[backend.Role]string{
+	backend.Strategist: "Strategizing",
+	backend.Executor:   "Executing",
+	backend.Evaluator:  "Evaluating",
+	backend.Archivist:  "Archiving",
+	backend.Standalone: "Working",
 }
 
-// RunThinkActEvaluator executes the strategist/executor/evaluator loop. It
-// stops like RunThinkAct.
-func RunThinkActEvaluator(ctx context.Context, be backend.Backend, folder, ralphDir string, round *int, maxRounds int) error {
-	return runPipeline(ctx, be, folder, ralphDir, "", round, maxRounds, true, false)
-}
-
-// RunThinkActEvaluatorArchivist executes the full four-role loop. It stops
-// like RunThinkAct.
-func RunThinkActEvaluatorArchivist(ctx context.Context, be backend.Backend, folder, ralphDir, memoryFile string, round *int, maxRounds int) error {
-	return runPipeline(ctx, be, folder, ralphDir, memoryFile, round, maxRounds, true, true)
-}
-
-func runPipeline(ctx context.Context, be backend.Backend, folder, ralphDir, memoryFile string, round *int, maxRounds int, withEvaluator, withArchivist bool) error {
-	for maxRounds == 0 || *round < maxRounds {
-		*round++
-		prefix := filepath.Join(ralphDir, fmt.Sprintf("round-%03d", *round))
-
-		fmt.Printf("%s\n  Round %d — Strategizing...\n%s\n", separator, *round, separator)
-
-		strategistRaw, err := be.RunThinker(ctx, folder, prompt.StrategistPrompt())
-		if err != nil {
-			return agentError(ctx, "strategist", err)
+// Run runs rounds of pattern p on folder, numbering them from finished+1,
+// where finished counts the rounds completed by earlier runs (see
+// ResumeRound). Each role's raw output is saved in ralphDir as
+// round-NNN-<role>.json.
+//
+// Run stops after round maxRounds (0 means no limit), when ctx is cancelled,
+// or when an agent's CLI fails; only the last case returns an error. A round
+// whose strategist or standalone agent produces no output is skipped.
+func Run(ctx context.Context, be backend.Backend, p Pattern, folder, ralphDir string, finished, maxRounds int) error {
+	for n := finished + 1; maxRounds == 0 || n <= maxRounds; n++ {
+		r := round{
+			be:        be,
+			folder:    folder,
+			num:       n,
+			logPrefix: filepath.Join(ralphDir, fmt.Sprintf("round-%03d", n)),
 		}
-		os.MkdirAll(ralphDir, 0o755)
-		_ = os.WriteFile(prefix+"-strategist.json", strategistRaw, 0o644)
-
-		objective := backend.ExtractResult(strategistRaw)
-		if objective == "" {
-			fmt.Println("[!] Strategist produced no output. Retrying...")
+		var summary string
+		var err error
+		if p == Standalone {
+			summary, err = r.step(ctx, backend.Standalone, prompt.Standalone(folder))
+		} else {
+			summary, err = r.pipeline(ctx, p)
+		}
+		if err != nil {
+			if ctx.Err() != nil {
+				return nil // interrupted
+			}
+			return err
+		}
+		if summary == "" {
+			fmt.Printf("--- Round %d skipped ---\n\n", n)
 			continue
 		}
-
-		fmt.Printf("\n%s\n\n%s\n  Round %d — Executing...\n%s\n", objective, separator, *round, separator)
-
-		executorRaw, err := be.RunWorker(ctx, folder, prompt.ExecutorPrompt(folder, objective))
-		if err != nil {
-			return agentError(ctx, "executor", err)
-		}
-		_ = os.WriteFile(prefix+"-executor.json", executorRaw, 0o644)
-
-		executorResult := backend.ExtractResult(executorRaw)
-		printResult("Executor", executorResult)
-
-		evaluatorResult := ""
-		if withEvaluator {
-			fmt.Printf("%s\n  Round %d — Evaluating...\n%s\n", separator, *round, separator)
-
-			evaluatorRaw, err := be.RunWorker(ctx, folder, prompt.EvaluatorPrompt(folder, objective, executorResult))
-			if err != nil {
-				return agentError(ctx, "evaluator", err)
-			}
-			_ = os.WriteFile(prefix+"-evaluator.json", evaluatorRaw, 0o644)
-
-			evaluatorResult = backend.ExtractResult(evaluatorRaw)
-			printResult("Evaluator", evaluatorResult)
-		}
-
-		if withArchivist {
-			fmt.Printf("%s\n  Round %d — Archiving...\n%s\n", separator, *round, separator)
-
-			archivistRaw, err := be.RunArchivist(ctx, folder, prompt.ArchivistPrompt(folder, objective, executorResult, evaluatorResult, memoryFile))
-			if err != nil {
-				return agentError(ctx, "archivist", err)
-			}
-			_ = os.WriteFile(prefix+"-archivist.json", archivistRaw, 0o644)
-
-			archivistResult := backend.ExtractResult(archivistRaw)
-			printResult("Archivist", archivistResult)
-		}
-
-		finishRound(folder, *round, objective)
+		finishRound(folder, n, summary)
 	}
 	return nil
 }
 
-func printResult(role, result string) {
-	if result == "" {
-		fmt.Printf("[!] %s produced no output.\n\n", role)
-		return
+// round is one numbered round in progress.
+type round struct {
+	be        backend.Backend
+	folder    string
+	num       int
+	logPrefix string // path prefix of the round's logs, e.g. .ralph/round-007
+}
+
+// pipeline runs the strategist and executor, then the evaluator and
+// archivist if p includes them. It returns the strategist's objective, or ""
+// if there was none, in which case no other role runs.
+func (r *round) pipeline(ctx context.Context, p Pattern) (string, error) {
+	objective, err := r.step(ctx, backend.Strategist, prompt.Strategist())
+	if err != nil || objective == "" {
+		return "", err
 	}
-	fmt.Printf("\n%s\n\n", result)
+	in := prompt.Round{Folder: r.folder, Objective: objective, MemoryFile: r.be.MemoryFile()}
+	if in.ExecutorResult, err = r.step(ctx, backend.Executor, prompt.Executor(in)); err != nil {
+		return "", err
+	}
+	if p.has(backend.Evaluator) {
+		if in.EvaluatorResult, err = r.step(ctx, backend.Evaluator, prompt.Evaluator(in)); err != nil {
+			return "", err
+		}
+	}
+	if p.has(backend.Archivist) {
+		if _, err = r.step(ctx, backend.Archivist, prompt.Archivist(in)); err != nil {
+			return "", err
+		}
+	}
+	return objective, nil
+}
+
+// step runs one turn of role, saves its raw output to the round log, and
+// prints and returns the agent's final message.
+func (r *round) step(ctx context.Context, role backend.Role, p prompt.Prompt) (string, error) {
+	banner(r.num, stages[role])
+	raw, err := r.be.Run(ctx, role, r.folder, p)
+	if err != nil {
+		return "", fmt.Errorf("%s: %w", role, err)
+	}
+	if err := r.save(role, raw); err != nil {
+		fmt.Printf("[!] Could not save the %s log: %v\n", role, err)
+	}
+	result := backend.ExtractResult(raw)
+	if result == "" {
+		fmt.Printf("[!] The %s agent produced no output.\n\n", role)
+	} else {
+		fmt.Printf("\n%s\n\n", result)
+	}
+	return result, nil
+}
+
+func (r *round) save(role backend.Role, raw []byte) error {
+	path := r.logPrefix + "-" + string(role) + ".json"
+	// An agent may have removed the directory, e.g. with git clean.
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return err
+	}
+	return os.WriteFile(path, raw, 0o644)
+}
+
+func banner(round int, stage string) {
+	fmt.Printf("%s\n  Round %d — %s...\n%s\n", separator, round, stage, separator)
 }
 
 // finishRound commits the round's changes and reports the outcome. Git
@@ -113,7 +139,7 @@ func finishRound(folder string, round int, summary string) {
 		fmt.Printf("--- Round %d complete ---\n", round)
 		return
 	}
-	fmt.Printf("%s\n  Round %d — Persisting...\n%s\n", separator, round, separator)
+	banner(round, "Persisting")
 	committed, pushed, err := git.CommitAll(folder, commitMessage(summary))
 	switch {
 	case err != nil && committed:
@@ -145,14 +171,4 @@ func commitMessage(summary string) string {
 		line = strings.TrimSpace(string([]rune(line)[:maxLen]))
 	}
 	return "ralph: " + line
-}
-
-// agentError returns the error that ends the loop after role failed: nil if
-// ctx was cancelled, which means the user interrupted the run, and err
-// otherwise.
-func agentError(ctx context.Context, role string, err error) error {
-	if ctx.Err() != nil {
-		return nil
-	}
-	return fmt.Errorf("%s: %w", role, err)
 }

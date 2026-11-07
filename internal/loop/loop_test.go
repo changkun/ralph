@@ -4,10 +4,10 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"unicode/utf8"
@@ -17,257 +17,200 @@ import (
 	"github.com/changkun/ralph/internal/prompt"
 )
 
-type mockBE struct {
-	thinker, worker, archivist func() (string, error)
+type reply func(ctx context.Context) (string, error)
+
+func say(s string) reply { return func(context.Context) (string, error) { return s, nil } }
+
+// fakeBackend answers each role with replies[role], or with "<role> done" if
+// there is none, and records the roles it ran and the prompts it received.
+type fakeBackend struct {
+	replies map[backend.Role]reply
+	calls   []backend.Role
+	prompts map[backend.Role]prompt.Prompt
 }
 
-func (m *mockBE) RunThinker(_ context.Context, _ string, _ prompt.Prompt) ([]byte, error) {
-	r, err := m.thinker()
+func (f *fakeBackend) Run(ctx context.Context, role backend.Role, _ string, p prompt.Prompt) ([]byte, error) {
+	f.calls = append(f.calls, role)
+	if f.prompts == nil {
+		f.prompts = map[backend.Role]prompt.Prompt{}
+	}
+	f.prompts[role] = p
+	r, ok := f.replies[role]
+	if !ok {
+		r = say(string(role) + " done")
+	}
+	result, err := r(ctx)
 	if err != nil {
 		return nil, err
 	}
-	b, _ := json.Marshal(backend.Result{Value: r})
-	return b, nil
+	return json.Marshal(backend.Result{Value: result})
 }
 
-func (m *mockBE) RunWorker(_ context.Context, _ string, _ prompt.Prompt) ([]byte, error) {
-	r, err := m.worker()
-	if err != nil {
-		return nil, err
-	}
-	b, _ := json.Marshal(backend.Result{Value: r})
-	return b, nil
-}
+func (f *fakeBackend) MemoryFile() string { return "MEMORY.md" }
 
-func (m *mockBE) RunArchivist(_ context.Context, _ string, _ prompt.Prompt) ([]byte, error) {
-	r, err := m.archivist()
-	if err != nil {
-		return nil, err
-	}
-	b, _ := json.Marshal(backend.Result{Value: r})
-	return b, nil
-}
-
-func ok(s string) func() (string, error) { return func() (string, error) { return s, nil } }
-func fail() func() (string, error)       { return func() (string, error) { return "", errors.New("err") } }
-
-func setup(t *testing.T) (string, string) {
+// logs returns the names of the round logs in dir.
+func logs(t *testing.T, dir string) []string {
 	t.Helper()
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var names []string
+	for _, e := range entries {
+		names = append(names, e.Name())
+	}
+	return names
+}
+
+func assertEqual[T comparable](t *testing.T, what string, got, want []T) {
+	t.Helper()
+	if !slices.Equal(got, want) {
+		t.Errorf("%s:\n got %v\nwant %v", what, got, want)
+	}
+}
+
+func TestRunPatterns(t *testing.T) {
+	tests := []struct {
+		pattern Pattern
+		roles   []backend.Role
+	}{
+		{Standalone, []backend.Role{"standalone"}},
+		{ThinkAct, []backend.Role{"strategist", "executor"}},
+		{ThinkActEvaluator, []backend.Role{"strategist", "executor", "evaluator"}},
+		{ThinkActEvaluatorArchivist, []backend.Role{"strategist", "executor", "evaluator", "archivist"}},
+	}
+	for _, tt := range tests {
+		t.Run(string(tt.pattern), func(t *testing.T) {
+			dir := t.TempDir()
+			be := &fakeBackend{}
+			if err := Run(context.Background(), be, tt.pattern, dir, dir, 0, 1); err != nil {
+				t.Fatal(err)
+			}
+			assertEqual(t, "roles run", be.calls, tt.roles)
+			var want []string
+			for _, role := range tt.roles {
+				want = append(want, "round-001-"+string(role)+".json")
+			}
+			slices.Sort(want)
+			assertEqual(t, "logs", logs(t, dir), want)
+		})
+	}
+}
+
+func TestRunNumbersRoundsAfterFinished(t *testing.T) {
 	dir := t.TempDir()
-	rd := filepath.Join(dir, ".ralph")
-	os.MkdirAll(rd, 0o755)
-	return dir, rd
-}
-
-func initRepo(t *testing.T, dir string) {
-	t.Helper()
-	for _, a := range [][]string{
-		{"init"}, {"config", "user.email", "t@t"}, {"config", "user.name", "T"},
-	} {
-		exec.Command("git", append([]string{"-C", dir}, a...)...).Run()
+	if err := Run(context.Background(), &fakeBackend{}, ThinkAct, dir, dir, 2, 4); err != nil {
+		t.Fatal(err)
 	}
-	os.WriteFile(filepath.Join(dir, ".gitkeep"), nil, 0o644)
-	exec.Command("git", "-C", dir, "add", ".").Run()
-	exec.Command("git", "-C", dir, "commit", "-m", "init").Run()
+	assertEqual(t, "logs", logs(t, dir), []string{
+		"round-003-executor.json", "round-003-strategist.json",
+		"round-004-executor.json", "round-004-strategist.json",
+	})
 }
 
-func TestNormal(t *testing.T) {
-	dir, rd := setup(t)
-	r := 0
-	RunThinkAct(context.Background(), &mockBE{ok("idea"), ok("done"), nil}, dir, rd, &r, 1)
-	if r != 1 {
-		t.Errorf("round=%d", r)
+func TestRunPassesRoundToLaterRoles(t *testing.T) {
+	dir := t.TempDir()
+	be := &fakeBackend{}
+	if err := Run(context.Background(), be, ThinkActEvaluatorArchivist, dir, dir, 0, 1); err != nil {
+		t.Fatal(err)
+	}
+	archivist := be.prompts[backend.Archivist].User
+	for _, want := range []string{dir, "strategist done", "executor done", "evaluator done", "MEMORY.md"} {
+		if !strings.Contains(archivist, want) {
+			t.Errorf("archivist prompt does not contain %q:\n%s", want, archivist)
+		}
 	}
 }
 
-func TestEmptyWorker(t *testing.T) {
-	dir, rd := setup(t)
-	r := 0
-	RunThinkAct(context.Background(), &mockBE{ok("idea"), ok(""), nil}, dir, rd, &r, 1)
-}
-
-func TestEmptyThinker(t *testing.T) {
-	dir, rd := setup(t)
-	r := 0
-	RunThinkAct(context.Background(), &mockBE{ok(""), ok(""), nil}, dir, rd, &r, 1)
-}
-
-func TestThinkerCancel(t *testing.T) {
-	dir, rd := setup(t)
-	ctx, cancel := context.WithCancel(context.Background())
-	cancel()
-	r := 0
-	if err := RunThinkAct(ctx, &mockBE{fail(), ok(""), nil}, dir, rd, &r, 0); err != nil {
-		t.Errorf("err = %v, want nil after an interrupt", err)
+func TestRunSkipsRoundWithoutObjective(t *testing.T) {
+	for _, p := range []Pattern{ThinkAct, Standalone} {
+		t.Run(string(p), func(t *testing.T) {
+			dir := t.TempDir()
+			be := &fakeBackend{replies: map[backend.Role]reply{
+				backend.Strategist: say(""),
+				backend.Standalone: say(""),
+			}}
+			if err := Run(context.Background(), be, p, dir, dir, 0, 2); err != nil {
+				t.Fatal(err)
+			}
+			first := p.roles()[0]
+			assertEqual(t, "roles run", be.calls, []backend.Role{first, first})
+		})
 	}
 }
 
-func TestWorkerCancel(t *testing.T) {
-	dir, rd := setup(t)
-	ctx, cancel := context.WithCancel(context.Background())
-	r := 0
-	be := &mockBE{ok("idea"), func() (string, error) { cancel(); return "", errors.New("e") }, nil}
-	if err := RunThinkAct(ctx, be, dir, rd, &r, 0); err != nil {
-		t.Errorf("err = %v, want nil after an interrupt", err)
+func TestRunContinuesAfterEmptyExecutorResult(t *testing.T) {
+	dir := t.TempDir()
+	be := &fakeBackend{replies: map[backend.Role]reply{backend.Executor: say("")}}
+	if err := Run(context.Background(), be, ThinkActEvaluator, dir, dir, 0, 1); err != nil {
+		t.Fatal(err)
 	}
+	assertEqual(t, "roles run", be.calls, []backend.Role{"strategist", "executor", "evaluator"})
 }
 
-func TestStopsOnAgentError(t *testing.T) {
-	dir, rd := setup(t)
-	r := 0
-	be := &mockBE{ok("idea"), func() (string, error) { return "", errors.New("not logged in") }, nil}
-	err := RunThinkActEvaluator(context.Background(), be, dir, rd, &r, 0)
+func TestRunStopsOnAgentError(t *testing.T) {
+	dir := t.TempDir()
+	be := &fakeBackend{replies: map[backend.Role]reply{
+		backend.Executor: func(context.Context) (string, error) { return "", errors.New("not logged in") },
+	}}
+	err := Run(context.Background(), be, ThinkActEvaluator, dir, dir, 0, 0)
 	if err == nil || err.Error() != "executor: not logged in" {
 		t.Errorf("err = %v, want %q", err, "executor: not logged in")
 	}
-	if r != 1 {
-		t.Errorf("round=%d, want 1", r)
-	}
-	if _, err := os.Stat(filepath.Join(rd, "round-001-executor.json")); !os.IsNotExist(err) {
-		t.Errorf("executor log written for a failed run: %v", err)
-	}
+	assertEqual(t, "roles run", be.calls, []backend.Role{"strategist", "executor"})
+	assertEqual(t, "logs", logs(t, dir), []string{"round-001-strategist.json"})
 }
 
-func TestStandaloneStopsOnAgentError(t *testing.T) {
-	dir, rd := setup(t)
-	r := 0
-	err := RunStandalone(context.Background(), &mockBE{nil, fail(), nil}, dir, rd, &r, 0)
-	if err == nil || err.Error() != "standalone: err" {
-		t.Errorf("err = %v, want %q", err, "standalone: err")
-	}
-}
-
-func TestGitCommit(t *testing.T) {
-	dir, rd := setup(t)
-	initRepo(t, dir)
-	os.WriteFile(filepath.Join(dir, "f.txt"), []byte("x"), 0o644)
-	r := 0
-	RunThinkAct(context.Background(), &mockBE{ok("idea"), ok("done"), nil}, dir, rd, &r, 1)
-	if git.HasChanges(dir) {
-		t.Fatal("expected changes to be committed")
-	}
-}
-
-func TestThinkActEvaluator(t *testing.T) {
-	dir, rd := setup(t)
-	r := 0
-	RunThinkActEvaluator(context.Background(), &mockBE{ok("idea"), ok("done"), nil}, dir, rd, &r, 1)
-	if _, err := os.Stat(filepath.Join(rd, "round-001-evaluator.json")); err != nil {
-		t.Fatal(err)
-	}
-}
-
-func TestThinkActEvaluatorArchivist(t *testing.T) {
-	dir, rd := setup(t)
-	r := 0
-	RunThinkActEvaluatorArchivist(context.Background(), &mockBE{ok("idea"), ok("done"), ok("documented")}, dir, rd, "CLAUDE.md", &r, 1)
-	if _, err := os.Stat(filepath.Join(rd, "round-001-archivist.json")); err != nil {
-		t.Fatal(err)
-	}
-}
-
-func TestStandaloneNormal(t *testing.T) {
-	dir, rd := setup(t)
-	r := 0
-	RunStandalone(context.Background(), &mockBE{nil, ok("built it"), nil}, dir, rd, &r, 1)
-	if r != 1 {
-		t.Errorf("round=%d", r)
-	}
-}
-
-func TestStandaloneEmpty(t *testing.T) {
-	dir, rd := setup(t)
-	r := 0
-	RunStandalone(context.Background(), &mockBE{nil, ok(""), nil}, dir, rd, &r, 1)
-}
-
-func TestStandaloneCancel(t *testing.T) {
-	dir, rd := setup(t)
+func TestRunStopsOnInterrupt(t *testing.T) {
+	dir := t.TempDir()
 	ctx, cancel := context.WithCancel(context.Background())
-	cancel()
-	r := 0
-	RunStandalone(ctx, &mockBE{nil, fail(), nil}, dir, rd, &r, 0)
+	be := &fakeBackend{replies: map[backend.Role]reply{
+		backend.Executor: func(ctx context.Context) (string, error) { cancel(); return "", ctx.Err() },
+	}}
+	if err := Run(ctx, be, ThinkActEvaluator, dir, dir, 0, 0); err != nil {
+		t.Errorf("err = %v, want nil after an interrupt", err)
+	}
+	assertEqual(t, "roles run", be.calls, []backend.Role{"strategist", "executor"})
 }
 
-func TestResumeRoundStandalone(t *testing.T) {
+func TestRunRecreatesLogDir(t *testing.T) {
 	dir := t.TempDir()
-	os.WriteFile(filepath.Join(dir, "round-001-standalone.json"), []byte(`{}`), 0o644)
-	os.WriteFile(filepath.Join(dir, "round-002-standalone.json"), []byte(`{}`), 0o644)
-	if r := ResumeRound(dir, "standalone"); r != 2 {
-		t.Errorf("standalone rounds: got %d, want 2", r)
+	ralphDir := filepath.Join(dir, ".ralph")
+	if err := Run(context.Background(), &fakeBackend{}, Standalone, dir, ralphDir, 0, 1); err != nil {
+		t.Fatal(err)
 	}
+	assertEqual(t, "logs", logs(t, ralphDir), []string{"round-001-standalone.json"})
 }
 
-func TestResumeRoundBuilderCompatibility(t *testing.T) {
+func TestRunCommitsEachRound(t *testing.T) {
 	dir := t.TempDir()
-	os.WriteFile(filepath.Join(dir, "round-001-builder.json"), []byte(`{}`), 0o644)
-	os.WriteFile(filepath.Join(dir, "round-002-builder.json"), []byte(`{}`), 0o644)
-	if r := ResumeRound(dir, "standalone"); r != 2 {
-		t.Errorf("builder compatibility rounds: got %d, want 2", r)
+	for _, args := range [][]string{
+		{"init", "-q"},
+		{"config", "user.email", "t@t"},
+		{"config", "user.name", "T"},
+		{"config", "commit.gpgsign", "false"},
+	} {
+		if out, err := exec.Command("git", append([]string{"-C", dir}, args...)...).CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v\n%s", args, err, out)
+		}
 	}
-}
-
-func TestResumeRoundThinkAct(t *testing.T) {
-	dir := t.TempDir()
-	if r := ResumeRound(dir, "think+act"); r != 0 {
-		t.Errorf("empty dir: got %d", r)
+	be := &fakeBackend{replies: map[backend.Role]reply{
+		backend.Executor: func(context.Context) (string, error) {
+			return "wrote f.txt", os.WriteFile(filepath.Join(dir, "f.txt"), []byte("x"), 0o644)
+		},
+	}}
+	if err := Run(context.Background(), be, ThinkAct, dir, filepath.Join(dir, ".ralph"), 0, 1); err != nil {
+		t.Fatal(err)
 	}
-	for i := 1; i <= 3; i++ {
-		os.WriteFile(filepath.Join(dir, fmt.Sprintf("round-%03d-strategist.json", i)), []byte(`{}`), 0o644)
-		os.WriteFile(filepath.Join(dir, fmt.Sprintf("round-%03d-executor.json", i)), []byte(`{}`), 0o644)
+	if git.HasChanges(dir) {
+		t.Error("changes left uncommitted")
 	}
-	if r := ResumeRound(dir, "think+act"); r != 3 {
-		t.Errorf("3 rounds: got %d", r)
+	out, err := exec.Command("git", "-C", dir, "log", "-1", "--format=%s").Output()
+	if err != nil {
+		t.Fatal(err)
 	}
-	if r := ResumeRound("/nonexistent_ralph_test", "think+act"); r != 0 {
-		t.Errorf("bad dir: got %d", r)
-	}
-}
-
-func TestResumeRoundWorkerCompatibility(t *testing.T) {
-	dir := t.TempDir()
-	os.WriteFile(filepath.Join(dir, "round-001-worker.json"), []byte(`{}`), 0o644)
-	os.WriteFile(filepath.Join(dir, "round-002-worker.json"), []byte(`{}`), 0o644)
-	if r := ResumeRound(dir, "think+act"); r != 2 {
-		t.Errorf("worker compatibility rounds: got %d, want 2", r)
-	}
-}
-
-func TestResumeRoundThinkActEvaluator(t *testing.T) {
-	dir := t.TempDir()
-	for i := 1; i <= 2; i++ {
-		os.WriteFile(filepath.Join(dir, fmt.Sprintf("round-%03d-evaluator.json", i)), []byte(`{}`), 0o644)
-	}
-	if r := ResumeRound(dir, "think+act+evaluator"); r != 2 {
-		t.Errorf("evaluator rounds: got %d, want 2", r)
-	}
-}
-
-func TestResumeRoundThinkActEvaluatorCompatibility(t *testing.T) {
-	dir := t.TempDir()
-	for i := 1; i <= 2; i++ {
-		os.WriteFile(filepath.Join(dir, fmt.Sprintf("round-%03d-tester.json", i)), []byte(`{}`), 0o644)
-	}
-	if r := ResumeRound(dir, "think+act+evaluator"); r != 2 {
-		t.Errorf("tester compatibility rounds: got %d, want 2", r)
-	}
-}
-
-func TestResumeRoundThinkActEvaluatorArchivist(t *testing.T) {
-	dir := t.TempDir()
-	os.WriteFile(filepath.Join(dir, "round-001-evaluator.json"), []byte(`{}`), 0o644)
-	os.WriteFile(filepath.Join(dir, "round-001-archivist.json"), []byte(`{}`), 0o644)
-	if r := ResumeRound(dir, "think+act+evaluator+archivist"); r != 1 {
-		t.Errorf("archivist rounds: got %d, want 1", r)
-	}
-}
-
-func TestResumeRoundThinkActEvaluatorArchivistCompatibility(t *testing.T) {
-	dir := t.TempDir()
-	os.WriteFile(filepath.Join(dir, "round-001-tester.json"), []byte(`{}`), 0o644)
-	os.WriteFile(filepath.Join(dir, "round-001-documenter.json"), []byte(`{}`), 0o644)
-	if r := ResumeRound(dir, "think+act+evaluator+archivist"); r != 1 {
-		t.Errorf("documenter compatibility rounds: got %d, want 1", r)
+	if got, want := strings.TrimSpace(string(out)), "ralph: strategist done"; got != want {
+		t.Errorf("commit subject = %q, want %q", got, want)
 	}
 }
 

@@ -7,11 +7,14 @@ import (
 	"github.com/changkun/ralph/internal/prompt"
 )
 
-// Claude implements Backend using the Claude Code CLI.
+// Claude runs turns through the Claude Code CLI in print mode.
 type Claude struct{}
 
-func claudeExec(ctx context.Context, folder string, p prompt.Prompt) ([]byte, error) {
-	args := []string{"-p", "--dangerously-skip-permissions", "--output-format", "json"}
+// Run implements Backend. Claude Code runs with --dangerously-skip-permissions,
+// so the agent edits files and runs commands without asking. Its JSON output
+// already has the shape Run promises.
+func (*Claude) Run(ctx context.Context, _ Role, folder string, p prompt.Prompt) ([]byte, error) {
+	args := []string{"-p", "--output-format", "json", "--dangerously-skip-permissions"}
 	if p.System != "" {
 		args = append(args, "--append-system-prompt", p.System)
 	}
@@ -26,14 +29,5 @@ func claudeExec(ctx context.Context, folder string, p prompt.Prompt) ([]byte, er
 	return out, nil
 }
 
-func (c *Claude) RunThinker(ctx context.Context, folder string, p prompt.Prompt) ([]byte, error) {
-	return claudeExec(ctx, folder, p)
-}
-
-func (c *Claude) RunWorker(ctx context.Context, folder string, p prompt.Prompt) ([]byte, error) {
-	return claudeExec(ctx, folder, p)
-}
-
-func (c *Claude) RunArchivist(ctx context.Context, folder string, p prompt.Prompt) ([]byte, error) {
-	return claudeExec(ctx, folder, p)
-}
+// MemoryFile implements Backend.
+func (*Claude) MemoryFile() string { return "CLAUDE.md" }
