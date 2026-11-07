@@ -2,7 +2,6 @@ package backend
 
 import (
 	"context"
-	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -11,91 +10,63 @@ import (
 	"github.com/changkun/ralph/internal/prompt"
 )
 
-func fakeBin(t *testing.T, name, script string) {
-	t.Helper()
-	dir := t.TempDir()
-	if err := os.WriteFile(filepath.Join(dir, name), []byte("#!/bin/sh\n"+script), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	t.Setenv("PATH", dir+":"+os.Getenv("PATH"))
-}
-
-var testPrompt = prompt.Prompt{System: "sys", User: "test"}
-
-func TestClaudeRunThinker(t *testing.T) {
-	fakeBin(t, "claude", `echo '{"result":"idea"}'`)
-	raw, err := (&Claude{}).RunThinker(context.Background(), t.TempDir(), testPrompt)
+func TestClaudeRun(t *testing.T) {
+	// The fake reports the directory it ran in as its result.
+	args := fakeCLI(t, "claude", `printf '{"result":"%s"}' "$(pwd)"`)
+	folder := t.TempDir()
+	raw, err := (&Claude{}).Run(context.Background(), Executor, folder, prompt.Prompt{System: "sys", User: "task"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if r := ExtractResult(raw); r != "idea" {
-		t.Errorf("got %q", r)
+	if got, want := evalSymlinks(t, ExtractResult(raw)), evalSymlinks(t, folder); got != want {
+		t.Errorf("ran in %s, want %s", got, want)
 	}
+	assertArgs(t, args(), []string{
+		"-p", "--output-format", "json", "--dangerously-skip-permissions",
+		"--append-system-prompt", "sys", "task",
+	})
 }
 
-func TestClaudeRunWorker(t *testing.T) {
-	fakeBin(t, "claude", `echo '{"result":"done"}'`)
-	raw, err := (&Claude{}).RunWorker(context.Background(), t.TempDir(), testPrompt)
-	if err != nil {
+func TestClaudeRunNoSystemPrompt(t *testing.T) {
+	args := fakeCLI(t, "claude", `echo '{"result":"ok"}'`)
+	if _, err := (&Claude{}).Run(context.Background(), Archivist, t.TempDir(), prompt.Prompt{User: "task"}); err != nil {
 		t.Fatal(err)
 	}
-	if r := ExtractResult(raw); r != "done" {
-		t.Errorf("got %q", r)
-	}
-}
-
-func TestClaudeRunArchivist(t *testing.T) {
-	fakeBin(t, "claude", `echo '{"result":"documented"}'`)
-	raw, err := (&Claude{}).RunArchivist(context.Background(), t.TempDir(), testPrompt)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if r := ExtractResult(raw); r != "documented" {
-		t.Errorf("got %q", r)
-	}
-}
-
-func TestClaudeRunArchivistErr(t *testing.T) {
-	fakeBin(t, "claude", `exit 1`)
-	_, err := (&Claude{}).RunArchivist(context.Background(), t.TempDir(), testPrompt)
-	if err == nil {
-		t.Error("expected error")
-	}
-}
-
-func TestClaudeNoSystem(t *testing.T) {
-	fakeBin(t, "claude", `echo '{"result":"ok"}'`)
-	p := prompt.Prompt{User: "test"}
-	raw, err := (&Claude{}).RunThinker(context.Background(), t.TempDir(), p)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if r := ExtractResult(raw); r != "ok" {
-		t.Errorf("got %q", r)
-	}
+	assertArgs(t, args(), []string{"-p", "--output-format", "json", "--dangerously-skip-permissions", "task"})
 }
 
 func TestClaudeRunFailure(t *testing.T) {
-	fakeBin(t, "claude", `echo '{"result":"Not logged in"}'; exit 1`)
-	_, err := (&Claude{}).RunWorker(context.Background(), t.TempDir(), testPrompt)
+	fakeCLI(t, "claude", `echo '{"result":"Not logged in"}'; exit 1`)
+	_, err := (&Claude{}).Run(context.Background(), Executor, t.TempDir(), prompt.Prompt{User: "task"})
 	if err == nil || !strings.Contains(err.Error(), "Not logged in") {
 		t.Errorf("err = %v, want it to include the reported message", err)
 	}
 }
 
 func TestClaudeRunFailureStderr(t *testing.T) {
-	fakeBin(t, "claude", `echo 'command not understood' >&2; exit 2`)
-	_, err := (&Claude{}).RunWorker(context.Background(), t.TempDir(), testPrompt)
+	fakeCLI(t, "claude", `echo 'command not understood' >&2; exit 2`)
+	_, err := (&Claude{}).Run(context.Background(), Executor, t.TempDir(), prompt.Prompt{User: "task"})
 	if err == nil || !strings.Contains(err.Error(), "command not understood") {
 		t.Errorf("err = %v, want it to include stderr", err)
 	}
 }
 
+// evalSymlinks resolves path so that paths under /tmp and /private/tmp on
+// macOS compare equal.
+func evalSymlinks(t *testing.T, path string) string {
+	t.Helper()
+	resolved, err := filepath.EvalSymlinks(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return resolved
+}
+
 func TestClaudeRunSubprocessHoldsOutput(t *testing.T) {
 	// The CLI succeeds but leaves a background process holding its stdout.
-	fakeBin(t, "claude", `sleep 10 & echo '{"result":"ok"}'`)
+	fakeCLI(t, "claude", `sleep 10 & echo '{"result":"ok"}'`)
 	start := time.Now()
-	raw, err := (&Claude{}).RunWorker(context.Background(), t.TempDir(), testPrompt)
+	raw, err := (&Claude{}).Run(context.Background(), Executor, t.TempDir(), prompt.Prompt{User: "task"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -109,11 +80,11 @@ func TestClaudeRunSubprocessHoldsOutput(t *testing.T) {
 
 func TestClaudeRunCancelled(t *testing.T) {
 	// The CLI's child keeps running, and holding stdout, after the CLI is killed.
-	fakeBin(t, "claude", `sleep 10`)
+	fakeCLI(t, "claude", `sleep 10`)
 	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
 	defer cancel()
 	start := time.Now()
-	if _, err := (&Claude{}).RunWorker(ctx, t.TempDir(), testPrompt); err == nil {
+	if _, err := (&Claude{}).Run(ctx, Executor, t.TempDir(), prompt.Prompt{User: "task"}); err == nil {
 		t.Error("expected an error from a cancelled run")
 	}
 	if d := time.Since(start); d > waitDelay+5*time.Second {

@@ -1,3 +1,4 @@
+// Package backend runs agent turns through an external coding-agent CLI.
 package backend
 
 import (
@@ -12,28 +13,34 @@ import (
 	"github.com/changkun/ralph/internal/prompt"
 )
 
-// Backend runs LLM commands for Ralph's orchestration loops.
+// Role identifies the agent role a turn is run for. Its value also names the
+// round log file (round-NNN-<role>.json) that Ralph writes for the turn.
+type Role string
+
+// Agent roles. Standalone is the only role in the standalone pattern; the
+// others make up the strategist pipeline.
+const (
+	Strategist Role = "strategist"
+	Executor   Role = "executor"
+	Evaluator  Role = "evaluator"
+	Archivist  Role = "archivist"
+	Standalone Role = "standalone"
+)
+
+// Backend runs one agent turn at a time.
 type Backend interface {
-	RunThinker(ctx context.Context, folder string, p prompt.Prompt) ([]byte, error)
-	RunWorker(ctx context.Context, folder string, p prompt.Prompt) ([]byte, error)
-	RunArchivist(ctx context.Context, folder string, p prompt.Prompt) ([]byte, error)
+	// Run runs one turn of role in folder and returns JSON whose "result"
+	// field holds the agent's final message (see ExtractResult). If the CLI
+	// fails, the error says why.
+	Run(ctx context.Context, role Role, folder string, p prompt.Prompt) ([]byte, error)
+
+	// MemoryFile names the project file the agent reads as persistent
+	// instructions, such as CLAUDE.md.
+	MemoryFile() string
 }
 
-// Result is the JSON structure returned by LLM backends.
-type Result struct {
-	Value string `json:"result"`
-}
-
-// ExtractResult parses the JSON output and returns the result string.
-func ExtractResult(raw []byte) string {
-	var r Result
-	if err := json.Unmarshal(raw, &r); err != nil {
-		return ""
-	}
-	return r.Value
-}
-
-// New creates a Backend by name ("claude" or "codex").
+// New returns the backend with the given name ("claude" or "codex"), or nil
+// if there is none.
 func New(name string) Backend {
 	switch name {
 	case "claude":
@@ -42,6 +49,21 @@ func New(name string) Backend {
 		return &Codex{}
 	}
 	return nil
+}
+
+// Result is the JSON shape Backend.Run returns.
+type Result struct {
+	Value string `json:"result"`
+}
+
+// ExtractResult returns the agent's final message from Backend.Run output,
+// or "" if raw is not valid JSON.
+func ExtractResult(raw []byte) string {
+	var r Result
+	if err := json.Unmarshal(raw, &r); err != nil {
+		return ""
+	}
+	return r.Value
 }
 
 // waitDelay bounds how long output waits, once the CLI has exited or been

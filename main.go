@@ -15,41 +15,17 @@ import (
 
 	"github.com/changkun/ralph/internal/backend"
 	"github.com/changkun/ralph/internal/loop"
-	"github.com/changkun/ralph/internal/prompt"
 )
 
 type config struct {
 	backendName string
-	pattern     string
+	pattern     loop.Pattern
 	maxRounds   int
 	folder      string
 }
 
-const (
-	patternStandalone                 = "standalone"
-	patternThinkAct                   = "think+act"
-	patternThinkActEvaluator          = "think+act+evaluator"
-	patternThinkActEvaluatorArchivist = "think+act+evaluator+archivist"
-	patternUsage                      = patternStandalone + "|" + patternThinkAct + "|" + patternThinkActEvaluator + "|" + patternThinkActEvaluatorArchivist
-)
-
-func normalizePattern(pattern string) (string, bool) {
-	switch pattern {
-	case "", patternThinkAct, "think-act", "think_act", "strategist-executor":
-		return patternThinkAct, true
-	case patternThinkActEvaluator, "think-act-evaluator", "think_act_evaluator", "strategist-executor-evaluator", "think+act+tester", "think-act-tester", "think_act_tester", "strategist-executor-tester":
-		return patternThinkActEvaluator, true
-	case patternThinkActEvaluatorArchivist, "think-act-evaluator-archivist", "think_act_evaluator_archivist", "strategist-executor-evaluator-archivist", "think+act+tester+documenter", "think-act-tester-documenter", "think_act_tester_documenter", "full-pipeline", "pipeline":
-		return patternThinkActEvaluatorArchivist, true
-	case patternStandalone, "builder", "build-only", "build_only":
-		return patternStandalone, true
-	default:
-		return "", false
-	}
-}
-
 func parseArgs(args []string) (config, error) {
-	cfg := config{backendName: "claude", pattern: patternThinkAct}
+	cfg := config{backendName: "claude", pattern: loop.ThinkAct}
 	for len(args) > 0 {
 		switch args[0] {
 		case "--backend":
@@ -62,7 +38,11 @@ func parseArgs(args []string) (config, error) {
 			if len(args) < 2 {
 				return cfg, fmt.Errorf("--pattern requires a value")
 			}
-			cfg.pattern = args[1]
+			p, err := loop.ParsePattern(args[1])
+			if err != nil {
+				return cfg, err
+			}
+			cfg.pattern = p
 			args = args[2:]
 		case "--max-rounds":
 			if len(args) < 2 {
@@ -85,13 +65,8 @@ func parseArgs(args []string) (config, error) {
 	if cfg.folder == "" {
 		return cfg, fmt.Errorf("folder is required")
 	}
-	if cfg.backendName != "claude" && cfg.backendName != "codex" {
+	if backend.New(cfg.backendName) == nil {
 		return cfg, fmt.Errorf("backend must be 'claude' or 'codex', got '%s'", cfg.backendName)
-	}
-	var ok bool
-	cfg.pattern, ok = normalizePattern(cfg.pattern)
-	if !ok {
-		return cfg, fmt.Errorf("pattern must be one of '%s', got '%s'", patternUsage, cfg.pattern)
 	}
 	var err error
 	cfg.folder, err = filepath.Abs(cfg.folder)
@@ -99,50 +74,33 @@ func parseArgs(args []string) (config, error) {
 }
 
 func run(ctx context.Context, cfg config, be backend.Backend) error {
-	if cfg.backendName == "" {
-		cfg.backendName = "claude"
-	}
-	var ok bool
-	cfg.pattern, ok = normalizePattern(cfg.pattern)
-	if !ok {
-		return fmt.Errorf("pattern must be one of '%s', got '%s'", patternUsage, cfg.pattern)
-	}
 	ralphDir := filepath.Join(cfg.folder, ".ralph")
 	if err := os.MkdirAll(ralphDir, 0o755); err != nil {
 		return err
 	}
-	round := loop.ResumeRound(ralphDir, cfg.pattern)
+	finished := loop.ResumeRound(ralphDir, cfg.pattern)
 	fmt.Printf("=== Ralph loop starting ===\nBackend: %s\nPattern: %s\nFolder: %s\n", cfg.backendName, cfg.pattern, cfg.folder)
-	if round > 0 {
-		fmt.Printf("Resuming from round %d\n", round)
+	if finished > 0 {
+		fmt.Printf("Resuming after round %d\n", finished)
 	}
 	if cfg.maxRounds > 0 {
 		fmt.Printf("Max rounds: %d\n", cfg.maxRounds)
 	}
-	fmt.Println("Press Ctrl-C to stop.")
-	fmt.Println()
-	switch cfg.pattern {
-	case patternStandalone:
-		return loop.RunStandalone(ctx, be, cfg.folder, ralphDir, &round, cfg.maxRounds)
-	case patternThinkActEvaluator:
-		return loop.RunThinkActEvaluator(ctx, be, cfg.folder, ralphDir, &round, cfg.maxRounds)
-	case patternThinkActEvaluatorArchivist:
-		return loop.RunThinkActEvaluatorArchivist(ctx, be, cfg.folder, ralphDir, prompt.MemoryFile(cfg.backendName), &round, cfg.maxRounds)
-	default:
-		return loop.RunThinkAct(ctx, be, cfg.folder, ralphDir, &round, cfg.maxRounds)
-	}
+	fmt.Print("Press Ctrl-C to stop.\n\n")
+	return loop.Run(ctx, be, cfg.pattern, cfg.folder, ralphDir, finished, cfg.maxRounds)
 }
 
+// osExit is os.Exit, replaced in tests.
 var osExit = os.Exit
 
 func realMain(args []string) int {
 	cfg, err := parseArgs(args)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error: %v\nUsage: ralph [--backend claude|codex] [--pattern %s] [--max-rounds N] <folder>\n", err, patternUsage)
+		fmt.Fprintf(os.Stderr, "Error: %v\nUsage: ralph [--backend claude|codex] [--pattern NAME] [--max-rounds N] <folder>\n", err)
 		return 1
 	}
-	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt)
-	defer cancel()
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
+	defer stop()
 	if err := run(ctx, cfg, backend.New(cfg.backendName)); err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		return 1
