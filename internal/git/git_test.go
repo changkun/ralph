@@ -140,3 +140,73 @@ func TestCommitAllNotARepo(t *testing.T) {
 		t.Errorf("committed=%v err=%v, want false and an error", committed, err)
 	}
 }
+
+func TestInit(t *testing.T) {
+	dir := t.TempDir()
+	if err := Init(dir); err != nil {
+		t.Fatal(err)
+	}
+	if !IsRepo(dir) {
+		t.Fatal("Init did not create a repository")
+	}
+	// A folder inside a repository is left alone.
+	sub := filepath.Join(dir, "sub")
+	if err := os.Mkdir(sub, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := Init(sub); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(sub, ".git")); !os.IsNotExist(err) {
+		t.Error("Init created a nested repository")
+	}
+	if err := Init("/dev/null"); err == nil {
+		t.Error("Init succeeded on a file")
+	}
+}
+
+func TestExclude(t *testing.T) {
+	dir := initRepo(t)
+	exclude := filepath.Join(dir, ".git", "info", "exclude")
+	if err := os.WriteFile(exclude, []byte("# comment"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	for range 2 {
+		if err := Exclude(dir, ".ralph/local/"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	data, err := os.ReadFile(exclude)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := string(data), "# comment\n.ralph/local/\n"; got != want {
+		t.Errorf("exclude file = %q, want %q", got, want)
+	}
+	if err := os.MkdirAll(filepath.Join(dir, ".ralph", "local"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, dir, ".ralph/local/config.json")
+	if HasChanges(dir) {
+		t.Error("an excluded file counts as a change")
+	}
+}
+
+func TestExcludeCreatesFile(t *testing.T) {
+	dir := initRepo(t)
+	if err := os.RemoveAll(filepath.Join(dir, ".git", "info")); err != nil {
+		t.Fatal(err)
+	}
+	if err := Exclude(dir, "x/"); err != nil {
+		t.Fatal(err)
+	}
+	if data, _ := os.ReadFile(filepath.Join(dir, ".git", "info", "exclude")); string(data) != "x/\n" {
+		t.Errorf("exclude file = %q", data)
+	}
+}
+
+func TestExcludeNotARepo(t *testing.T) {
+	if err := Exclude(t.TempDir(), "x/"); err == nil {
+		t.Error("Exclude succeeded outside a repository")
+	}
+}

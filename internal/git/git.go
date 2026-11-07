@@ -2,14 +2,65 @@
 package git
 
 import (
+	"bufio"
+	"bytes"
 	"fmt"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 )
 
 // IsRepo reports whether folder is inside a git work tree.
 func IsRepo(folder string) bool {
 	return command(folder, "rev-parse", "--is-inside-work-tree").Run() == nil
+}
+
+// Init creates an empty repository at folder unless folder is already in a
+// git work tree.
+func Init(folder string) error {
+	if IsRepo(folder) {
+		return nil
+	}
+	return run(folder, "init", "-q")
+}
+
+// Exclude adds pattern to the repository's local exclude file, which works
+// like .gitignore but is not part of the project, unless it is there
+// already. The repository then ignores the paths pattern matches.
+func Exclude(folder, pattern string) error {
+	out, err := command(folder, "rev-parse", "--git-path", "info/exclude").Output()
+	if err != nil {
+		return fmt.Errorf("git rev-parse: %w", err)
+	}
+	path := strings.TrimSpace(string(out))
+	if !filepath.IsAbs(path) {
+		path = filepath.Join(folder, path)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	for sc := bufio.NewScanner(bytes.NewReader(data)); sc.Scan(); {
+		if strings.TrimSpace(sc.Text()) == pattern {
+			return nil
+		}
+	}
+	if len(data) > 0 && data[len(data)-1] != '\n' {
+		pattern = "\n" + pattern
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return err
+	}
+	f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
+	if err != nil {
+		return err
+	}
+	if _, err := f.WriteString(pattern + "\n"); err != nil {
+		f.Close()
+		return err
+	}
+	return f.Close()
 }
 
 // HasChanges reports whether the repository at folder has staged, unstaged,
