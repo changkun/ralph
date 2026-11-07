@@ -9,7 +9,7 @@ Ralph comes as a command-line tool, `ralph`, and a desktop app, `ralph-gui`. Eit
 
 ## Roles and patterns
 
-Ralph has four agent roles:
+Ralph has four agent roles that run in rounds, and a [thinker](#thinkers) that does not:
 
 - **Strategist** proposes exactly one next objective. It only reasons, so it can only read the project. In a container, it runs in a second container that mounts the folder read-only. On this machine, Claude Code gets just the Read, Glob, and Grep tools and no MCP servers, and Codex runs in its `read-only` sandbox.
 - **Executor** implements that objective.
@@ -49,6 +49,12 @@ A pattern selects which roles run in each round:
 
 Committing and pushing are infrastructure, not an agent role. Ralph commits once all roles in the round have finished, and pushes only if the current branch has an upstream. If the folder is not a git repository, `ralph` creates one when it starts; the desktop app leaves that to you, with a *Run git init* button. Commits and pushes run on this machine, with your git identity and credentials, never in the container.
 
+### Thinkers
+
+One more pattern, `thinkers`, runs no rounds. Each start runs a number of **thinkers** side by side, 3 by default and at most 20. Each thinker runs once, alone, in a new empty folder in the project folder, `thinker1`, `thinker2`, and so on, and in a container of its own that mounts only that folder. So no thinker sees the others, their work, or anything else on your machine, and each starts from a clean environment. A thinker's built-in prompt asks it to propose one idea, and it may write notes in its folder. Starting again runs more thinkers, numbered after those before.
+
+Their transcripts and final answers go in `.ralph/` as `thinkerN.jsonl` and `thinkerN.json`, outside every thinker's folder; `ralph` also prints each answer as its thinker finishes. Thinkers run only in a container, the project folder need not be a git repository, and Ralph commits nothing. If a thinker fails, the others carry on, and the session reports the failure once all have finished.
+
 ## Rounds, logs, and resuming
 
 Ralph keeps two logs per turn in the folder's `.ralph/` directory:
@@ -79,7 +85,7 @@ With `--runtime podman` or `--runtime docker` (the desktop app defaults to the f
 
   Environment variables are passed by name, so their values never appear on a command line. Ralph refuses to start a session in which a backend has nothing to log in with.
 
-Containers are named `ralph-<hash of the folder>-rw` and `-ro`, and removed when the session ends; a session also removes any left over from one that did not end cleanly.
+Containers are named `ralph-<hash of the folder>-rw` and `-ro`, a thinker's after its own folder, and removed when the session ends; a session also removes any left over from one that did not end cleanly.
 
 On Linux, Podman maps your user to the agents' user, so files they create belong to you. Docker on Linux does so only if your user ID is 1000. On hosts that enforce SELinux, the bind mount may need relabeling, which Ralph does not do.
 
@@ -88,10 +94,12 @@ On Linux, Podman maps your user to the agents' user, so files they create belong
 `ralph-gui` runs sessions like `ralph` does, with settings for each role and a live view of the agents' work:
 
 1. Choose a project folder, which must be a git repository. If it is not one, the app says so, and Start stays disabled until you press *Run git init* or run `git init` in it yourself. Started without a folder, the app reopens the last one, or if there is none, asks for one.
-2. Choose where agents run (Podman, Docker, or this machine) and the pattern.
+2. Choose where agents run (Podman, Docker, or this machine) and the pattern. With [`thinkers`](#thinkers), the folder need not be a git repository, but agents must run in a container.
 3. For each role in the pattern, choose Claude Code or Codex and a model, and edit its system prompt and prompt if you like. Prompts are Go templates; Reset restores the built-in ones.
 4. Press Start, after setting how many rounds it runs if you like; left empty, the session runs until you stop it. Once rounds have finished, the button reads Continue and runs that many more. The app checks the settings and logins, then runs the session in a background process, so it keeps running if you quit the app; open the folder again to follow it. Stop ends it.
 5. Watch the agents work. The Live view, shown first, follows the session: the turns of the latest ten rounds, one after another, with each agent's messages, reasoning, tool calls, commands, and results as they happen. It stays at the newest output until you scroll up; *Jump to latest* returns there. Console shows the session's own output, including the first image build and any error, and choosing a turn in the middle column shows that turn alone.
+
+With `thinkers`, set how many thinkers each start runs in place of the rounds. The middle column lists every thinker, the Live view shows each one's final answer, or why it has none, and choosing a thinker shows its whole transcript.
 
 Agents' Markdown is shown formatted; uncheck *Format Markdown* to see it as written. Long tool output shows its first lines until you expand it. Drag the handles between the columns to resize them.
 
@@ -139,6 +147,9 @@ make run
 
 # Run five rounds, then stop; run it again to continue
 ./ralph --rounds 5 /path/to/project
+
+# Five thinkers side by side, each alone in a container; run it again for more
+./ralph --pattern thinkers --runtime podman --thinkers 5 /path/to/project
 ```
 
 | Option | Default | Description |
@@ -146,8 +157,9 @@ make run
 | `--runtime host\|podman\|docker` | `host` | Where agents run: on this machine, or in a container; see [Running agents in a container](#running-agents-in-a-container) |
 | `--backend claude\|codex` | `claude` | Agent CLI to run |
 | `--model NAME` | the CLI's default | Model for every role |
-| `--pattern NAME` | `think+act` | Roles in each round; see [Roles and patterns](#roles-and-patterns) |
+| `--pattern NAME` | `think+act` | Roles in each round, or `thinkers`, which needs a container runtime; see [Roles and patterns](#roles-and-patterns) |
 | `--rounds N` | `0` (no limit) | Run N rounds after those already finished, then stop |
+| `--thinkers N` | `3` | With `--pattern thinkers`, run N thinkers, from 1 to 20, numbered after those already run; see [Thinkers](#thinkers) |
 | `-h`, `--help` | | Show usage |
 
 The command-line tool runs every role with the same backend, model, and built-in prompts. To set them per role, use the desktop app.
