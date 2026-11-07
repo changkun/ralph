@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -11,7 +10,6 @@ import (
 
 	"github.com/changkun/ralph/internal/backend"
 	"github.com/changkun/ralph/internal/loop"
-	"github.com/changkun/ralph/internal/prompt"
 )
 
 func TestParseArgs(t *testing.T) {
@@ -43,6 +41,13 @@ func TestParseArgs(t *testing.T) {
 	}
 }
 
+func TestParseArgsModel(t *testing.T) {
+	cfg, err := parseArgs([]string{"--model", "opus", "/tmp"})
+	if err != nil || cfg.model != "opus" {
+		t.Errorf("model = %q, err = %v; want opus", cfg.model, err)
+	}
+}
+
 func TestParseArgsErrors(t *testing.T) {
 	tests := []struct {
 		name string
@@ -54,6 +59,7 @@ func TestParseArgsErrors(t *testing.T) {
 		{"unknown backend", []string{"--backend", "gpt", "/tmp"}},
 		{"unknown pattern", []string{"--pattern", "bad", "/tmp"}},
 		{"backend without value", []string{"--backend"}},
+		{"model without value", []string{"--model"}},
 		{"pattern without value", []string{"--pattern"}},
 		{"max rounds without value", []string{"--max-rounds"}},
 		{"max rounds not a number", []string{"--max-rounds", "abc", "/tmp"}},
@@ -81,11 +87,11 @@ func TestParseArgsHelp(t *testing.T) {
 // cancelled.
 type stubBackend struct{}
 
-func (stubBackend) Run(ctx context.Context, _ backend.Role, _ string, _ prompt.Prompt) ([]byte, error) {
+func (stubBackend) Run(ctx context.Context, _ backend.Turn) (string, error) {
 	if err := ctx.Err(); err != nil {
-		return nil, err
+		return "", err
 	}
-	return json.Marshal(backend.Result{Value: "ok"})
+	return "ok", nil
 }
 
 func TestRun(t *testing.T) {
@@ -156,7 +162,7 @@ func TestMainRunError(t *testing.T)   { callMain(t, []string{"/dev/null"}, 1) }
 
 func TestMainSuccess(t *testing.T) {
 	bin := t.TempDir()
-	if err := os.WriteFile(filepath.Join(bin, "claude"), []byte("#!/bin/sh\necho '{\"result\":\"x\"}'\n"), 0o755); err != nil {
+	if err := os.WriteFile(filepath.Join(bin, "claude"), []byte("#!/bin/sh\necho '{\"type\":\"result\",\"result\":\"x\"}'\n"), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
