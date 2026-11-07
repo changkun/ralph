@@ -16,7 +16,6 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
-	"syscall"
 	"time"
 
 	"github.com/changkun/ralph/internal/backend"
@@ -337,15 +336,7 @@ func ReadStatus(folder string) (Status, error) {
 // Active reports whether the session is starting or running and its
 // process is alive.
 func (st Status) Active() bool {
-	if st.State != Starting && st.State != Running || st.PID <= 0 {
-		return false
-	}
-	p, err := os.FindProcess(st.PID)
-	if err != nil {
-		return false
-	}
-	err = p.Signal(syscall.Signal(0))
-	return err == nil || errors.Is(err, syscall.EPERM)
+	return (st.State == Starting || st.State == Running) && Alive(st.PID)
 }
 
 // Run runs a session on folder with s until ctx is cancelled, the last
