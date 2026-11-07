@@ -46,8 +46,6 @@ func (f *fakeBackend) Run(ctx context.Context, role backend.Role, _ string, p pr
 	return json.Marshal(backend.Result{Value: result})
 }
 
-func (f *fakeBackend) MemoryFile() string { return "MEMORY.md" }
-
 // logs returns the names of the round logs in dir.
 func logs(t *testing.T, dir string) []string {
 	t.Helper()
@@ -115,7 +113,7 @@ func TestRunPassesRoundToLaterRoles(t *testing.T) {
 		t.Fatal(err)
 	}
 	archivist := be.prompts[backend.Archivist].User
-	for _, want := range []string{dir, "strategist done", "executor done", "evaluator done", "MEMORY.md"} {
+	for _, want := range []string{dir, "strategist done", "executor done", "evaluator done", "AGENTS.md"} {
 		if !strings.Contains(archivist, want) {
 			t.Errorf("archivist prompt does not contain %q:\n%s", want, archivist)
 		}

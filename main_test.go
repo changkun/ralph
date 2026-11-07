@@ -88,8 +88,6 @@ func (stubBackend) Run(ctx context.Context, _ backend.Role, _ string, _ prompt.P
 	return json.Marshal(backend.Result{Value: "ok"})
 }
 
-func (stubBackend) MemoryFile() string { return "MEMORY.md" }
-
 func TestRun(t *testing.T) {
 	for _, p := range loop.Patterns {
 		t.Run(string(p), func(t *testing.T) {

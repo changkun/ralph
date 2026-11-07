@@ -37,10 +37,6 @@ type Backend interface {
 	// field holds the agent's final message (see ExtractResult). If the CLI
 	// fails, the error says why.
 	Run(ctx context.Context, role Role, folder string, p prompt.Prompt) ([]byte, error)
-
-	// MemoryFile names the project file the agent reads as persistent
-	// instructions, such as CLAUDE.md.
-	MemoryFile() string
 }
 
 // New returns the backend with the given name ("claude" or "codex"), or nil

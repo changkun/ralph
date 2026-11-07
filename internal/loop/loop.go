@@ -81,7 +81,7 @@ func (r *round) pipeline(ctx context.Context, p Pattern) (string, error) {
 	if err != nil || objective == "" {
 		return "", err
 	}
-	in := prompt.Round{Folder: r.folder, Objective: objective, MemoryFile: r.be.MemoryFile()}
+	in := prompt.Round{Folder: r.folder, Objective: objective}
 	if in.ExecutorResult, err = r.step(ctx, backend.Executor, prompt.Executor(in)); err != nil {
 		return "", err
 	}

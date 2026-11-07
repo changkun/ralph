@@ -26,7 +26,6 @@ type Round struct {
 	Objective       string // the strategist's objective
 	ExecutorResult  string // the executor's summary of its changes
 	EvaluatorResult string // the evaluator's report
-	MemoryFile      string // the backend's memory file, e.g. CLAUDE.md
 }
 
 var (
@@ -48,7 +47,8 @@ func Executor(r Round) Prompt { return render(executor, r) }
 func Evaluator(r Round) Prompt { return render(evaluator, r) }
 
 // Archivist returns the prompt that asks for the round's lasting knowledge
-// to be recorded in r.MemoryFile and the project documentation.
+// to be recorded in AGENTS.md, which every supported agent CLI reads, and
+// in the project documentation.
 func Archivist(r Round) Prompt { return render(archivist, r) }
 
 // Standalone returns the prompt that asks a single agent to choose and
