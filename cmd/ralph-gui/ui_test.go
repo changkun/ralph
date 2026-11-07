@@ -170,6 +170,17 @@ func TestFollowsSession(t *testing.T) {
 	}
 	frame(t, u)
 	screenshot(t, u, "running")
+
+	// Another folder can be opened while the session runs.
+	other := t.TempDir()
+	u.openFolder(other)
+	if u.folder != other || u.active() {
+		t.Errorf("folder = %q, active = %v; want the other, idle folder", u.folder, u.active())
+	}
+	u.openFolder(folder)
+	if !u.active() || u.view != 3 {
+		t.Errorf("active = %v, view = %d; want to follow the running session again", u.active(), u.view)
+	}
 }
 
 func TestSettings(t *testing.T) {
