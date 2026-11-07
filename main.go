@@ -1,21 +1,40 @@
-// ralph — Run Claude Code or OpenAI Codex autonomously.
+// Command ralph runs Claude Code or OpenAI Codex in an autonomous loop on a
+// project folder, committing the project after every round.
 //
 // Usage:
 //
-//	ralph [--backend claude|codex] [--pattern standalone|think+act|think+act+evaluator|think+act+evaluator+archivist] [--max-rounds N] <folder>
+//	ralph [--backend claude|codex] [--pattern NAME] [--max-rounds N] <folder>
+//
+// Run ralph --help for the list of patterns.
 package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strconv"
 	"strings"
 
 	"github.com/changkun/ralph/internal/backend"
 	"github.com/changkun/ralph/internal/loop"
 )
+
+const usage = `Usage: ralph [options] <folder>
+
+Options:
+  --backend claude|codex   agent CLI to run (default claude)
+  --pattern NAME           roles in each round (default think+act); one of
+                           standalone, think+act, think+act+evaluator,
+                           think+act+evaluator+archivist
+  --max-rounds N           stop after round N; 0 means no limit (default 0)
+  -h, --help               show this help
+`
+
+// errHelp reports that the user asked for help.
+var errHelp = errors.New("help requested")
 
 type config struct {
 	backendName string
@@ -27,46 +46,48 @@ type config struct {
 func parseArgs(args []string) (config, error) {
 	cfg := config{backendName: "claude", pattern: loop.ThinkAct}
 	for len(args) > 0 {
-		switch args[0] {
+		arg := args[0]
+		args = args[1:]
+		if arg == "-h" || arg == "--help" {
+			return cfg, errHelp
+		}
+		if !strings.HasPrefix(arg, "-") {
+			if cfg.folder != "" {
+				return cfg, fmt.Errorf("unexpected argument %q: only one folder is allowed", arg)
+			}
+			cfg.folder = arg
+			continue
+		}
+		if arg != "--backend" && arg != "--pattern" && arg != "--max-rounds" {
+			return cfg, fmt.Errorf("unknown option %s", arg)
+		}
+		if len(args) == 0 {
+			return cfg, fmt.Errorf("%s requires a value", arg)
+		}
+		value := args[0]
+		args = args[1:]
+		switch arg {
 		case "--backend":
-			if len(args) < 2 {
-				return cfg, fmt.Errorf("--backend requires a value")
+			if backend.New(value) == nil {
+				return cfg, fmt.Errorf("unknown backend %q; want claude or codex", value)
 			}
-			cfg.backendName = args[1]
-			args = args[2:]
+			cfg.backendName = value
 		case "--pattern":
-			if len(args) < 2 {
-				return cfg, fmt.Errorf("--pattern requires a value")
-			}
-			p, err := loop.ParsePattern(args[1])
+			p, err := loop.ParsePattern(value)
 			if err != nil {
 				return cfg, err
 			}
 			cfg.pattern = p
-			args = args[2:]
 		case "--max-rounds":
-			if len(args) < 2 {
-				return cfg, fmt.Errorf("--max-rounds requires a value")
-			}
-			var n int
-			if _, err := fmt.Sscanf(args[1], "%d", &n); err != nil || n < 0 {
-				return cfg, fmt.Errorf("--max-rounds must be a non-negative integer")
+			n, err := strconv.Atoi(value)
+			if err != nil || n < 0 {
+				return cfg, fmt.Errorf("--max-rounds must be a non-negative integer, got %q", value)
 			}
 			cfg.maxRounds = n
-			args = args[2:]
-		default:
-			if strings.HasPrefix(args[0], "-") {
-				return cfg, fmt.Errorf("unknown option: %s", args[0])
-			}
-			cfg.folder = args[0]
-			args = args[1:]
 		}
 	}
 	if cfg.folder == "" {
-		return cfg, fmt.Errorf("folder is required")
-	}
-	if backend.New(cfg.backendName) == nil {
-		return cfg, fmt.Errorf("backend must be 'claude' or 'codex', got '%s'", cfg.backendName)
+		return cfg, errors.New("folder is required")
 	}
 	var err error
 	cfg.folder, err = filepath.Abs(cfg.folder)
@@ -95,8 +116,12 @@ var osExit = os.Exit
 
 func realMain(args []string) int {
 	cfg, err := parseArgs(args)
+	if errors.Is(err, errHelp) {
+		fmt.Print(usage)
+		return 0
+	}
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error: %v\nUsage: ralph [--backend claude|codex] [--pattern NAME] [--max-rounds N] <folder>\n", err)
+		fmt.Fprintf(os.Stderr, "Error: %v\n\n%s", err, usage)
 		return 1
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
