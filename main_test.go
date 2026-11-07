@@ -165,3 +165,10 @@ func TestMainSuccess(t *testing.T) {
 	t.Setenv("PATH", fakeDir+":"+os.Getenv("PATH"))
 	callMain(t, []string{"--max-rounds", "1", dir}, 0)
 }
+
+func TestMainAgentFailure(t *testing.T) {
+	fakeDir := t.TempDir()
+	os.WriteFile(filepath.Join(fakeDir, "claude"), []byte("#!/bin/sh\nexit 1\n"), 0o755)
+	t.Setenv("PATH", fakeDir+":"+os.Getenv("PATH"))
+	callMain(t, []string{"--max-rounds", "1", t.TempDir()}, 1)
+}

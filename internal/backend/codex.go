@@ -30,14 +30,14 @@ func codexExec(ctx context.Context, folder string, p prompt.Prompt, extra ...str
 	args = append(args, extra...)
 	args = append(args, "-C", folder, "-o", path, fullPrompt)
 
-	cmd := exec.CommandContext(ctx, "codex", args...)
-	cmd.Stdout = nil
-	cmd.Stderr = nil
-	_ = cmd.Run()
-
+	// output collects stdout, which only repeats the final message, and keeps
+	// the tail of stderr so runError can report why a run failed.
+	if _, err := output(exec.CommandContext(ctx, "codex", args...)); err != nil {
+		return nil, runError("codex", err, "")
+	}
 	text, err := os.ReadFile(path)
 	if err != nil {
-		text = nil
+		return nil, err
 	}
 	return json.Marshal(Result{Value: string(text)})
 }

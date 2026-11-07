@@ -14,22 +14,26 @@ import (
 
 const separator = "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 
-// RunThinkAct executes the two-role strategist/executor loop.
-func RunThinkAct(ctx context.Context, be backend.Backend, folder, ralphDir string, round *int, maxRounds int) {
-	runPipeline(ctx, be, folder, ralphDir, "", round, maxRounds, false, false)
+// RunThinkAct executes the two-role strategist/executor loop. It stops after
+// round maxRounds (0 means no limit), when ctx is cancelled, or when an
+// agent's CLI fails; only the last case returns an error.
+func RunThinkAct(ctx context.Context, be backend.Backend, folder, ralphDir string, round *int, maxRounds int) error {
+	return runPipeline(ctx, be, folder, ralphDir, "", round, maxRounds, false, false)
 }
 
-// RunThinkActEvaluator executes the strategist/executor/evaluator loop.
-func RunThinkActEvaluator(ctx context.Context, be backend.Backend, folder, ralphDir string, round *int, maxRounds int) {
-	runPipeline(ctx, be, folder, ralphDir, "", round, maxRounds, true, false)
+// RunThinkActEvaluator executes the strategist/executor/evaluator loop. It
+// stops like RunThinkAct.
+func RunThinkActEvaluator(ctx context.Context, be backend.Backend, folder, ralphDir string, round *int, maxRounds int) error {
+	return runPipeline(ctx, be, folder, ralphDir, "", round, maxRounds, true, false)
 }
 
-// RunThinkActEvaluatorArchivist executes the full four-role loop.
-func RunThinkActEvaluatorArchivist(ctx context.Context, be backend.Backend, folder, ralphDir, memoryFile string, round *int, maxRounds int) {
-	runPipeline(ctx, be, folder, ralphDir, memoryFile, round, maxRounds, true, true)
+// RunThinkActEvaluatorArchivist executes the full four-role loop. It stops
+// like RunThinkAct.
+func RunThinkActEvaluatorArchivist(ctx context.Context, be backend.Backend, folder, ralphDir, memoryFile string, round *int, maxRounds int) error {
+	return runPipeline(ctx, be, folder, ralphDir, memoryFile, round, maxRounds, true, true)
 }
 
-func runPipeline(ctx context.Context, be backend.Backend, folder, ralphDir, memoryFile string, round *int, maxRounds int, withEvaluator, withArchivist bool) {
+func runPipeline(ctx context.Context, be backend.Backend, folder, ralphDir, memoryFile string, round *int, maxRounds int, withEvaluator, withArchivist bool) error {
 	for maxRounds == 0 || *round < maxRounds {
 		*round++
 		prefix := filepath.Join(ralphDir, fmt.Sprintf("round-%03d", *round))
@@ -37,8 +41,8 @@ func runPipeline(ctx context.Context, be backend.Backend, folder, ralphDir, memo
 		fmt.Printf("%s\n  Round %d — Strategizing...\n%s\n", separator, *round, separator)
 
 		strategistRaw, err := be.RunThinker(ctx, folder, prompt.StrategistPrompt())
-		if interrupted(ctx, err) {
-			return
+		if err != nil {
+			return agentError(ctx, "strategist", err)
 		}
 		os.MkdirAll(ralphDir, 0o755)
 		_ = os.WriteFile(prefix+"-strategist.json", strategistRaw, 0o644)
@@ -52,8 +56,8 @@ func runPipeline(ctx context.Context, be backend.Backend, folder, ralphDir, memo
 		fmt.Printf("\n%s\n\n%s\n  Round %d — Executing...\n%s\n", objective, separator, *round, separator)
 
 		executorRaw, err := be.RunWorker(ctx, folder, prompt.ExecutorPrompt(folder, objective))
-		if interrupted(ctx, err) {
-			return
+		if err != nil {
+			return agentError(ctx, "executor", err)
 		}
 		_ = os.WriteFile(prefix+"-executor.json", executorRaw, 0o644)
 
@@ -65,8 +69,8 @@ func runPipeline(ctx context.Context, be backend.Backend, folder, ralphDir, memo
 			fmt.Printf("%s\n  Round %d — Evaluating...\n%s\n", separator, *round, separator)
 
 			evaluatorRaw, err := be.RunWorker(ctx, folder, prompt.EvaluatorPrompt(folder, objective, executorResult))
-			if interrupted(ctx, err) {
-				return
+			if err != nil {
+				return agentError(ctx, "evaluator", err)
 			}
 			_ = os.WriteFile(prefix+"-evaluator.json", evaluatorRaw, 0o644)
 
@@ -78,8 +82,8 @@ func runPipeline(ctx context.Context, be backend.Backend, folder, ralphDir, memo
 			fmt.Printf("%s\n  Round %d — Archiving...\n%s\n", separator, *round, separator)
 
 			archivistRaw, err := be.RunArchivist(ctx, folder, prompt.ArchivistPrompt(folder, objective, executorResult, evaluatorResult, memoryFile))
-			if interrupted(ctx, err) {
-				return
+			if err != nil {
+				return agentError(ctx, "archivist", err)
 			}
 			_ = os.WriteFile(prefix+"-archivist.json", archivistRaw, 0o644)
 
@@ -89,6 +93,7 @@ func runPipeline(ctx context.Context, be backend.Backend, folder, ralphDir, memo
 
 		finishRound(folder, *round, objective)
 	}
+	return nil
 }
 
 func printResult(role, result string) {
@@ -142,6 +147,12 @@ func commitMessage(summary string) string {
 	return "ralph: " + line
 }
 
-func interrupted(ctx context.Context, err error) bool {
-	return err != nil && ctx.Err() != nil
+// agentError returns the error that ends the loop after role failed: nil if
+// ctx was cancelled, which means the user interrupted the run, and err
+// otherwise.
+func agentError(ctx context.Context, role string, err error) error {
+	if ctx.Err() != nil {
+		return nil
+	}
+	return fmt.Errorf("%s: %w", role, err)
 }

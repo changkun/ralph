@@ -18,7 +18,12 @@ func claudeExec(ctx context.Context, folder string, p prompt.Prompt) ([]byte, er
 	args = append(args, p.User)
 	cmd := exec.CommandContext(ctx, "claude", args...)
 	cmd.Dir = folder
-	return cmd.Output()
+	out, err := output(cmd)
+	if err != nil {
+		// A failed print-mode run usually still reports its error as the result.
+		return out, runError("claude", err, ExtractResult(out))
+	}
+	return out, nil
 }
 
 func (c *Claude) RunThinker(ctx context.Context, folder string, p prompt.Prompt) ([]byte, error) {
