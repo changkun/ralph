@@ -105,29 +105,30 @@ func printResult(role, result string) {
 	fmt.Printf("\n%s\n\n", result)
 }
 
+// finishRound commits the round's changes and reports the outcome. Git
+// failures are reported but do not stop the loop.
 func finishRound(folder string, round int, summary string) {
-	if git.IsRepo(folder) && git.HasChanges(folder) {
-		fmt.Printf("%s\n  Round %d — Persisting...\n%s\n", separator, round, separator)
-
-		committed, pushed, err := git.CommitAll(folder, commitMessage(summary))
-		switch {
-		case err == nil && pushed:
-			fmt.Printf("--- Round %d committed and pushed ---\n", round)
-		case err == nil && committed:
-			fmt.Printf("--- Round %d committed locally (no upstream configured) ---\n", round)
-		case err == nil:
-			fmt.Printf("--- Round %d complete ---\n", round)
-		case pushed:
-			fmt.Printf("[!] Push failed after commit: %v\n", err)
-			fmt.Printf("--- Round %d committed locally ---\n", round)
-		default:
-			fmt.Printf("[!] Git persistence failed: %v\n", err)
-			fmt.Printf("--- Round %d complete with local changes still present ---\n", round)
-		}
-	} else {
+	defer fmt.Println()
+	if !git.IsRepo(folder) || !git.HasChanges(folder) {
+		fmt.Printf("--- Round %d complete ---\n", round)
+		return
+	}
+	fmt.Printf("%s\n  Round %d — Persisting...\n%s\n", separator, round, separator)
+	committed, pushed, err := git.CommitAll(folder, commitMessage(summary))
+	switch {
+	case err != nil && committed:
+		fmt.Printf("[!] Push failed: %v\n", err)
+		fmt.Printf("--- Round %d committed locally ---\n", round)
+	case err != nil:
+		fmt.Printf("[!] Commit failed: %v\n", err)
+		fmt.Printf("--- Round %d complete; changes left uncommitted ---\n", round)
+	case pushed:
+		fmt.Printf("--- Round %d committed and pushed ---\n", round)
+	case committed:
+		fmt.Printf("--- Round %d committed locally (no upstream configured) ---\n", round)
+	default:
 		fmt.Printf("--- Round %d complete ---\n", round)
 	}
-	fmt.Println()
 }
 
 // commitMessage builds a one-line commit subject from the first line of the
