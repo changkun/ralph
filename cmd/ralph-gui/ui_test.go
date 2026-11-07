@@ -18,6 +18,7 @@ import (
 	"gioui.org/layout"
 	"gioui.org/op"
 	"gioui.org/unit"
+	"gioui.org/x/explorer"
 
 	"github.com/changkun/ralph/cmd/ralph-gui/internal/trackpad"
 	"github.com/changkun/ralph/internal/backend"
@@ -172,10 +173,33 @@ func kinds(es []entry) string {
 	return b.String()
 }
 
+// frameUntil lays out frames of u until done reports true.
+func frameUntil(t *testing.T, u *UI, done func() bool) {
+	t.Helper()
+	for deadline := time.Now().Add(5 * time.Second); !done(); time.Sleep(time.Millisecond) {
+		if time.Now().After(deadline) {
+			t.Fatal("timed out")
+		}
+		frame(t, u)
+	}
+}
+
 func TestNoFolder(t *testing.T) {
 	freshPrefs(t)
 	u := newUI(nil, "")
+	// A folder picker that answers what the test tells it to.
+	asked, answers := make(chan bool, 2), make(chan chosenFolder)
+	u.pick = func() (string, error) {
+		asked <- true
+		c := <-answers
+		return c.path, c.err
+	}
 	frame(t, u)
+	select {
+	case <-asked:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the app did not ask for a folder")
+	}
 	if s, _ := u.statusText(); !strings.Contains(s, "Choose a project folder") {
 		t.Errorf("status = %q", s)
 	}
@@ -184,6 +208,26 @@ func TestNoFolder(t *testing.T) {
 		t.Error("Start without a folder did nothing to say so")
 	}
 	screenshot(t, u, "empty")
+
+	// Declining leaves the app without a folder, and it asks no more.
+	answers <- chosenFolder{err: explorer.ErrUserDecline}
+	frameUntil(t, u, func() bool { return !u.choosing })
+	frame(t, u)
+	if u.folder != "" || len(asked) != 0 {
+		t.Errorf("folder = %q, asked again: %v", u.folder, len(asked) != 0)
+	}
+
+	// Choose… asks again, and the folder chosen opens.
+	folder := repo(t)
+	u.chooseFolder()
+	<-asked
+	answers <- chosenFolder{path: folder}
+	frameUntil(t, u, func() bool { return u.folder == folder })
+
+	// The app reopens the folder, so it need not ask.
+	if u := newUI(nil, ""); u.folder != folder || u.ask {
+		t.Errorf("folder = %q, ask = %v; want %q, false", u.folder, u.ask, folder)
+	}
 }
 
 func TestViews(t *testing.T) {

@@ -6,6 +6,8 @@
 //
 //	ralph-gui [folder]
 //
+// Without a folder, the app reopens the last one, or asks for one.
+//
 // Sessions run in a background process, so they keep running when the app
 // quits; reopen the folder to follow them again.
 package main

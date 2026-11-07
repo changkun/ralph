@@ -57,6 +57,8 @@ type UI struct {
 	message     string // the outcome of the last action, if it failed
 	lastPoll    time.Time
 
+	pick     func() (string, error) // shows the folder picker
+	ask      bool                   // whether to show it on the first frame
 	chosen   chan chosenFolder
 	choosing bool
 
@@ -151,6 +153,7 @@ func newUI(w *app.Window, folder string) *UI {
 	}
 	if w != nil {
 		u.expl = explorer.NewExplorer(w)
+		u.pick = u.expl.ChooseFolder
 	}
 	u.folderEd.SingleLine, u.folderEd.Submit = true, true
 	u.rounds.SingleLine, u.rounds.Filter = true, "0123456789"
@@ -171,6 +174,8 @@ func newUI(w *app.Window, folder string) *UI {
 	if folder != "" {
 		u.openFolder(folder)
 	}
+	// Without a folder to open, the app asks for one.
+	u.ask = u.folder == ""
 	return u
 }
 
@@ -306,15 +311,19 @@ func (u *UI) openFolder(dir string) {
 	}
 }
 
+// chooseFolder shows the folder picker, unless it is showing already. The
+// folder chosen opens in a later frame.
 func (u *UI) chooseFolder() {
-	if u.choosing || u.expl == nil {
+	if u.choosing || u.pick == nil {
 		return
 	}
 	u.choosing = true
 	go func() {
-		path, err := u.expl.ChooseFolder()
+		path, err := u.pick()
 		u.chosen <- chosenFolder{path, err}
-		u.w.Invalidate()
+		if u.w != nil {
+			u.w.Invalidate()
+		}
 	}()
 }
 
@@ -556,7 +565,9 @@ func (u *UI) update(gtx layout.Context) {
 			u.openFolder(u.folderEd.Text())
 		}
 	}
-	if u.chooseBtn.Clicked(gtx) {
+	// The picker shows over the window, so it waits for the first frame.
+	if u.chooseBtn.Clicked(gtx) || u.ask {
+		u.ask = false
 		u.chooseFolder()
 	}
 	if u.startBtn.Clicked(gtx) {
