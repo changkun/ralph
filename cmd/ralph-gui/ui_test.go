@@ -19,6 +19,7 @@ import (
 	"gioui.org/unit"
 
 	"github.com/changkun/ralph/internal/backend"
+	"github.com/changkun/ralph/internal/git"
 	"github.com/changkun/ralph/internal/loop"
 	"github.com/changkun/ralph/internal/session"
 )
@@ -125,6 +126,16 @@ func copyFile(t *testing.T, src, dst string) {
 	write(t, dst, string(data))
 }
 
+// repo returns a new git repository.
+func repo(t *testing.T) string {
+	t.Helper()
+	folder := t.TempDir()
+	if err := git.Init(folder); err != nil {
+		t.Fatal(err)
+	}
+	return folder
+}
+
 // freshPrefs removes the saved preferences.
 func freshPrefs(t *testing.T) {
 	t.Helper()
@@ -137,7 +148,7 @@ func freshPrefs(t *testing.T) {
 // turns and failed in a third.
 func project(t *testing.T) string {
 	t.Helper()
-	folder := t.TempDir()
+	folder := repo(t)
 	logs := filepath.Join(folder, ".ralph")
 	testdata := filepath.Join("..", "..", "internal", "transcript", "testdata")
 	copyFile(t, filepath.Join(testdata, "codex.jsonl"), filepath.Join(logs, "round-001-strategist.jsonl"))
@@ -396,7 +407,7 @@ func TestPrefs(t *testing.T) {
 }
 
 func TestSettings(t *testing.T) {
-	folder := t.TempDir()
+	folder := repo(t)
 	u := newUI(nil, folder)
 	frame(t, u)
 
@@ -439,7 +450,7 @@ func TestStartNeedsLogin(t *testing.T) {
 	for _, k := range []string{"ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "CLAUDE_CODE_OAUTH_TOKEN"} {
 		t.Setenv(k, "")
 	}
-	u := newUI(nil, t.TempDir())
+	u := newUI(nil, repo(t))
 	u.runtime.Value = "podman"
 	frame(t, u)
 	u.start()
@@ -448,6 +459,29 @@ func TestStartNeedsLogin(t *testing.T) {
 	}
 	frame(t, u)
 	screenshot(t, u, "login")
+}
+
+func TestStartNeedsRepo(t *testing.T) {
+	folder := t.TempDir()
+	u := newUI(nil, folder)
+	if s, bad := u.statusText(); !bad || s != notRepo {
+		t.Errorf("status = %q", s)
+	}
+	u.start()
+	if u.message != notRepo || u.launchedPID != 0 {
+		t.Errorf("message = %q, launched = %d", u.message, u.launchedPID)
+	}
+	frame(t, u)
+	screenshot(t, u, "norepo")
+
+	// Running git init in the folder is noticed.
+	if err := git.Init(folder); err != nil {
+		t.Fatal(err)
+	}
+	u.poll()
+	if s, bad := u.statusText(); bad || !u.isRepo {
+		t.Errorf("status = %q, repo = %v", s, u.isRepo)
+	}
 }
 
 func TestOpenFolder(t *testing.T) {
@@ -468,7 +502,7 @@ func TestOpenFolder(t *testing.T) {
 }
 
 func TestStatusText(t *testing.T) {
-	u := newUI(nil, t.TempDir())
+	u := newUI(nil, repo(t))
 	if s, _ := u.statusText(); s != "Not started yet." {
 		t.Errorf("status = %q", s)
 	}

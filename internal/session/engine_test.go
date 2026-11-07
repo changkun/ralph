@@ -1,20 +1,36 @@
 package session
 
 import (
+	"errors"
 	"os"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/changkun/ralph/internal/git"
 )
+
+// repo returns a new git repository.
+func repo(t *testing.T) string {
+	t.Helper()
+	folder := t.TempDir()
+	if err := git.Init(folder); err != nil {
+		t.Fatal(err)
+	}
+	return folder
+}
 
 func TestEngine(t *testing.T) {
 	isolate(t)
 	fakeBin(t, map[string]string{"claude": fakeClaude})
-	folder := t.TempDir()
+	var out strings.Builder
+	if err := Engine(t.TempDir(), &out); !errors.Is(err, ErrNotRepo) {
+		t.Errorf("Engine outside a git repository: %v", err)
+	}
+	folder := repo(t)
 	if err := hostSettings().Save(folder); err != nil {
 		t.Fatal(err)
 	}
-	var out strings.Builder
 	if err := Engine(folder, &out); err != nil {
 		t.Fatal(err)
 	}
@@ -60,7 +76,7 @@ func TestEngineInterrupted(t *testing.T) {
 	isolate(t)
 	// The agent runs until the engine is interrupted.
 	fakeBin(t, map[string]string{"claude": "sleep 30"})
-	folder := t.TempDir()
+	folder := repo(t)
 	if err := hostSettings().Save(folder); err != nil {
 		t.Fatal(err)
 	}

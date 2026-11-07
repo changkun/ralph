@@ -278,7 +278,7 @@ func (u *UI) layoutControls(gtx C) D {
 		layout.Rigid(func(gtx C) D {
 			return layout.Flex{Alignment: layout.Middle}.Layout(gtx,
 				layout.Rigid(func(gtx C) D {
-					if active || u.folder == "" {
+					if active || u.folder == "" || !u.isRepo {
 						gtx = gtx.Disabled()
 					}
 					return u.button(gtx, &u.startBtn, start, go_)
@@ -518,7 +518,7 @@ func (u *UI) layoutPane(gtx C) D {
 func (u *UI) layoutEntries(gtx C) D {
 	switch {
 	case u.folder == "":
-		return u.placeholder(gtx, "Choose a project folder. Ralph makes it a git repository if it is not one, and keeps its logs in .ralph.")
+		return u.placeholder(gtx, "Choose a project folder, which must be a git repository. Ralph commits it after each round, and keeps its logs in .ralph.")
 	case len(u.entries) == 0 && u.view == viewConsole:
 		return u.placeholder(gtx, "No session has run in this folder yet.")
 	case len(u.entries) == 0:

@@ -8,7 +8,12 @@ import (
 	"os/signal"
 	"path/filepath"
 	"syscall"
+
+	"github.com/changkun/ralph/internal/git"
 )
+
+// ErrNotRepo reports that a folder is not in a git repository.
+var ErrNotRepo = errors.New("not a git repository; run git init in it first")
 
 // The engine is a process that runs one session in the background, so that
 // the session outlives the GUI that starts it. Launch starts it, and the
@@ -19,8 +24,12 @@ func engineLogPath(folder string) string { return filepath.Join(folder, LocalDir
 
 // Engine runs a session on folder with its saved settings until the process
 // is interrupted or terminated, printing progress to out. It is what the
-// process Launch starts runs.
+// process Launch starts runs. Unlike Run, it does not make folder a git
+// repository: the desktop app leaves that to the user.
 func Engine(folder string, out io.Writer) error {
+	if !git.IsRepo(folder) {
+		return ErrNotRepo
+	}
 	s, err := Load(folder)
 	if err != nil {
 		return err
