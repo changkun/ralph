@@ -24,9 +24,10 @@ const (
 // most.
 var Patterns = []Pattern{Standalone, ThinkAct, ThinkActEvaluator, ThinkActEvaluatorArchivist}
 
-// Thinkers is the pattern that runs thinkers side by side, each once and
-// alone in an empty folder, rather than rounds. ParsePattern accepts it,
-// but Run does not run it; the session package does.
+// Thinkers is the pattern that runs only the strategist of think+act, as
+// thinkers side by side, each once and alone in an empty folder, rather
+// than rounds. ParsePattern accepts it, but Run does not run it; the
+// session package does.
 const Thinkers Pattern = "thinkers"
 
 // patternNames maps every accepted pattern name, with "+" as the only
@@ -74,7 +75,7 @@ func (p Pattern) Roles() []backend.Role {
 	case Standalone:
 		return []backend.Role{backend.Standalone}
 	case Thinkers:
-		return []backend.Role{backend.Thinker}
+		return []backend.Role{backend.Strategist}
 	case ThinkActEvaluator:
 		return []backend.Role{backend.Strategist, backend.Executor, backend.Evaluator}
 	case ThinkActEvaluatorArchivist:

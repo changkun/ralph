@@ -42,9 +42,8 @@ var Runtimes = append(slices.Clone(sandbox.Runtimes), Host)
 // then loop.Thinkers.
 var Patterns = append(slices.Clone(loop.Patterns), loop.Thinkers)
 
-// Roles lists every role, in the order they run in a round, then the
-// thinker.
-var Roles = []backend.Role{backend.Standalone, backend.Strategist, backend.Executor, backend.Evaluator, backend.Archivist, backend.Thinker}
+// Roles lists every role, in the order they run in a round.
+var Roles = []backend.Role{backend.Standalone, backend.Strategist, backend.Executor, backend.Evaluator, backend.Archivist}
 
 // Agent configures the agent for one role.
 type Agent struct {
@@ -502,7 +501,10 @@ type TurnLog struct {
 	Path  string // the transcript file
 	Done  bool   // whether the turn finished and saved its result
 
-	// For a thinker: its final answer once it is done, or why it failed.
+	// Thinker reports whether the turn is a thinker's: the strategist's,
+	// run alone. Round is then the thinker's number, and Result is its
+	// final answer once it is done, or Error why it failed.
+	Thinker       bool
 	Result, Error string
 }
 

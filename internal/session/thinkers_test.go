@@ -8,12 +8,13 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/changkun/ralph/internal/backend"
 	"github.com/changkun/ralph/internal/loop"
 )
 
 // fakeThinkerBin installs a fake podman, which runs exec'd commands on the
 // host in the folder the container mounts, and a fake claude, which logs
-// where it ran and how many files it found there, writes a note, and
+// where it ran and how many files it found there, keeps its arguments, and
 // answers with an idea named after its folder. The thinker whose folder is
 // called fail fails.
 func fakeThinkerBin(t *testing.T, fail string) string {
@@ -29,8 +30,8 @@ esac`,
 		"claude": `d=$(dirname "$0")
 here=$(basename "$(pwd)")
 echo "$(pwd) $(ls -A | wc -l | tr -d ' ')" >> "$d/claude.log"
+printf '%s\n' "$@" > "$d/args-$here"
 [ "$here" = '` + fail + `' ] && { echo 'Not logged in' >&2; exit 1; }
-echo note > note.md
 echo '{"type":"result","result":"an idea from '"$here"'"}'`,
 	})
 }
@@ -100,8 +101,19 @@ func TestRunThinkers(t *testing.T) {
 		if _, err := os.Stat(l.Path); err != nil {
 			t.Errorf("no transcript: %v", err)
 		}
-		if _, err := os.Stat(filepath.Join(folder, name, "note.md")); err != nil {
-			t.Errorf("the thinker could not write in its folder: %v", err)
+		// A thinker is the strategist, with its prompt.
+		if !l.Thinker || l.Role != backend.Strategist {
+			t.Errorf("thinker log = %+v", l)
+		}
+		strategist := DefaultAgent(backend.Strategist).Prompt
+		if args := read(t, filepath.Join(bin, "args-"+name)); !strings.Contains(args, strategist) {
+			t.Errorf("%s was not given the strategist's prompt:\n%s", name, args)
+		}
+	}
+	// Each ran in its read-only container.
+	for _, line := range strings.Split(read(t, filepath.Join(bin, "podman.log")), "\n") {
+		if args := strings.Fields(line); len(args) > 3 && args[0] == "exec" && !strings.HasSuffix(args[3], "-ro") {
+			t.Errorf("a thinker ran in a writable container: %s", line)
 		}
 	}
 	if st, _ := ReadStatus(folder); st.State != Finished || !slices.Equal(st.Thinkers, []int{1, 2, 3}) {

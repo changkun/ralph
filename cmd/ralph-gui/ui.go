@@ -588,7 +588,7 @@ func (u *UI) turnState(t session.TurnLog) (mark string, ok, running bool) {
 	switch {
 	case t.Done:
 		return "✓", true, false
-	case t.Role == backend.Thinker:
+	case t.Thinker:
 		// Thinkers run side by side: any of the session's that has not
 		// finished is running.
 		if t.Error == "" && u.hasStatus && u.status.Active() && slices.Contains(u.status.Thinkers, t.Round) {
@@ -744,7 +744,6 @@ var roleInfo = map[backend.Role]string{
 	backend.Executor:   "Carries out the objective.",
 	backend.Evaluator:  "Checks the executor's work.",
 	backend.Archivist:  "Records what was learned in the memory file.",
-	backend.Thinker:    "Thinks alone, once, in a new empty folder and a container of its own, and proposes one idea.",
 }
 
 // thinkersName names thinkers numbered ns, which are consecutive.

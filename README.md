@@ -9,7 +9,7 @@ Ralph comes as a command-line tool, `ralph`, and a desktop app, `ralph-gui`. Eit
 
 ## Roles and patterns
 
-Ralph has four agent roles that run in rounds, and a [thinker](#thinkers) that does not:
+Ralph has four agent roles:
 
 - **Strategist** proposes exactly one next objective. It only reasons, so it can only read the project. In a container, it runs in a second container that mounts the folder read-only. On this machine, Claude Code gets just the Read, Glob, and Grep tools and no MCP servers, and Codex runs in its `read-only` sandbox.
 - **Executor** implements that objective.
@@ -51,7 +51,7 @@ Committing and pushing are infrastructure, not an agent role. Ralph commits once
 
 ### Thinkers
 
-One more pattern, `thinkers`, runs no rounds. Each start runs a number of **thinkers** side by side, 3 by default and at most 20. Each thinker runs once, alone, in a new empty folder in the project folder, `thinker1`, `thinker2`, and so on, and in a container of its own that mounts only that folder. So no thinker sees the others, their work, or anything else on your machine, and each starts from a clean environment. A thinker's built-in prompt asks it to propose one idea, and it may write notes in its folder. Starting again runs more thinkers, numbered after those before.
+One more pattern, `thinkers`, runs only the thinking half of think+act: no executor, and no rounds. Each start runs a number of **thinkers** side by side, 3 by default and at most 20. A thinker is the strategist, with the same prompt and settings, run once and alone: in a new empty folder in the project folder, `thinker1`, `thinker2`, and so on, and in a container of its own that mounts only that folder, read-only. So no thinker sees the others, anything else on your machine, or anything left from before, and none can create files. Starting again runs more thinkers, numbered after those before.
 
 Their transcripts and final answers go in `.ralph/` as `thinkerN.jsonl` and `thinkerN.json`, outside every thinker's folder; `ralph` also prints each answer as its thinker finishes. Thinkers run only in a container, the project folder need not be a git repository, and Ralph commits nothing. If a thinker fails, the others carry on, and the session reports the failure once all have finished.
 
@@ -99,7 +99,7 @@ On Linux, Podman maps your user to the agents' user, so files they create belong
 4. Press Start, after setting how many rounds it runs if you like; left empty, the session runs until you stop it. Once rounds have finished, the button reads Continue and runs that many more. The app checks the settings and logins, then runs the session in a background process, so it keeps running if you quit the app; open the folder again to follow it. Stop ends it.
 5. Watch the agents work. The Live view, shown first, follows the session: the turns of the latest ten rounds, one after another, with each agent's messages, reasoning, tool calls, commands, and results as they happen. It stays at the newest output until you scroll up; *Jump to latest* returns there. Console shows the session's own output, including the first image build and any error, and choosing a turn in the middle column shows that turn alone.
 
-With `thinkers`, set how many thinkers each start runs in place of the rounds. The middle column lists every thinker, the Live view shows each one's final answer, or why it has none, and choosing a thinker shows its whole transcript.
+With `thinkers`, set how many thinkers each start runs in place of the rounds; the Strategist settings below are the ones thinkers use. The middle column lists every thinker, the Live view shows each one's final answer, or why it has none, and choosing a thinker shows its whole transcript.
 
 Agents' Markdown is shown formatted; uncheck *Format Markdown* to see it as written. Long tool output shows its first lines until you expand it. Drag the handles between the columns to resize them.
 
