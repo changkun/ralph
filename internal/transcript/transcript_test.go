@@ -3,6 +3,7 @@ package transcript
 import (
 	"bufio"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -137,5 +138,30 @@ func TestParse(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestReadFile(t *testing.T) {
+	events, err := ReadFile(filepath.Join("testdata", "claude.jsonl"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(events) == 0 || events[len(events)-1].Kind != Result {
+		t.Errorf("events = %+v, want them to end with the result", events)
+	}
+
+	// A line still being written is left out.
+	path := filepath.Join(t.TempDir(), "turn.jsonl")
+	data := `{"type":"item.completed","item":{"type":"agent_message","text":"one"}}` + "\n\n" +
+		`{"type":"item.completed","item":{"type":"agent_message","text":"tw`
+	if err := os.WriteFile(path, []byte(data), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	events, err = ReadFile(path)
+	if err != nil || len(events) != 1 || events[0].Text != "one" {
+		t.Errorf("ReadFile = %+v, %v; want only the complete message", events, err)
+	}
+	if _, err := ReadFile(filepath.Join(t.TempDir(), "missing")); err == nil {
+		t.Error("ReadFile of a missing file succeeded")
 	}
 }
