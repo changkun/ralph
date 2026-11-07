@@ -139,6 +139,20 @@ func Detect() string {
 	return ""
 }
 
+// EnsureImage builds the agent image with runtime, one of Runtimes, if it
+// does not exist, printing the build's output to out. Start does so too,
+// but sandboxes that start side by side need it done once first.
+func EnsureImage(ctx context.Context, runtime string, out io.Writer) error {
+	bin, err := LookRuntime(runtime)
+	if err != nil {
+		return err
+	}
+	if out == nil {
+		out = io.Discard
+	}
+	return ensureImage(ctx, bin, out)
+}
+
 func ensureImage(ctx context.Context, bin string, out io.Writer) error {
 	if exec.CommandContext(ctx, bin, "image", "inspect", "--format", "{{.Id}}", Image()).Run() == nil {
 		return nil

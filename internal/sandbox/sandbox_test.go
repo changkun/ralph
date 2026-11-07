@@ -236,6 +236,23 @@ func TestStartBuildFails(t *testing.T) {
 	}
 }
 
+func TestEnsureImage(t *testing.T) {
+	f := installFake(t, "podman", false, false)
+	var out strings.Builder
+	if err := EnsureImage(context.Background(), "podman", &out); err != nil {
+		t.Fatal(err)
+	}
+	if err := EnsureImage(context.Background(), "podman", nil); err != nil {
+		t.Fatal(err)
+	}
+	if got, want := f.subcommands(), []string{"image", "build", "image"}; !slices.Equal(got, want) {
+		t.Errorf("subcommands = %v, want %v: the image built more than once", got, want)
+	}
+	if !strings.Contains(out.String(), "Building the agent image") {
+		t.Errorf("output = %q", out.String())
+	}
+}
+
 func TestStartUnknownRuntime(t *testing.T) {
 	if _, err := Start(context.Background(), Options{Runtime: "lxc"}); err == nil {
 		t.Error("expected an error")
