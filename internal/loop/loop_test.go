@@ -8,7 +8,9 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
+	"unicode/utf8"
 
 	"github.com/changkun/ralph/internal/backend"
 	"github.com/changkun/ralph/internal/git"
@@ -266,5 +268,30 @@ func TestResumeRoundThinkActEvaluatorArchivistCompatibility(t *testing.T) {
 	os.WriteFile(filepath.Join(dir, "round-001-documenter.json"), []byte(`{}`), 0o644)
 	if r := ResumeRound(dir, "think+act+evaluator+archivist"); r != 1 {
 		t.Errorf("documenter compatibility rounds: got %d, want 1", r)
+	}
+}
+
+func TestCommitMessage(t *testing.T) {
+	long := strings.Repeat("a", 70)
+	wide := strings.Repeat("é", 70)
+	tests := []struct {
+		summary, want string
+	}{
+		{"", "ralph: update project"},
+		{"  \n  ", "ralph: update project"},
+		{"- : -", "ralph: update project"},
+		{"Add a CLI", "ralph: Add a CLI"},
+		{"- Add   a\tCLI:\nwith details", "ralph: Add a CLI"},
+		{long, "ralph: " + long[:60]},
+		{wide, "ralph: " + strings.Repeat("é", 60)},
+	}
+	for _, tt := range tests {
+		got := commitMessage(tt.summary)
+		if got != tt.want {
+			t.Errorf("commitMessage(%q) = %q, want %q", tt.summary, got, tt.want)
+		}
+		if !utf8.ValidString(got) {
+			t.Errorf("commitMessage(%q) is not valid UTF-8", tt.summary)
+		}
 	}
 }
