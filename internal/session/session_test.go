@@ -91,6 +91,15 @@ func TestValidate(t *testing.T) {
 			a.Prompt = "{{.Nope}}"
 			s.Agents[backend.Strategist] = a
 		}, "strategist prompt"},
+		{"thinkers on host", func(s *Settings) { s.Pattern, s.Runtime = loop.Thinkers, Host }, "only in a container"},
+		{"no thinkers", func(s *Settings) { s.Pattern, s.Runtime, s.Thinkers = loop.Thinkers, "podman", 0 }, "from 1 to 20"},
+		{"too many thinkers", func(s *Settings) { s.Pattern, s.Runtime, s.Thinkers = loop.Thinkers, "podman", 21 }, "from 1 to 20"},
+		{"thinker template", func(s *Settings) {
+			s.Pattern, s.Runtime = loop.Thinkers, "podman"
+			a := s.Agents[backend.Thinker]
+			a.Prompt = "{{.Nope}}"
+			s.Agents[backend.Thinker] = a
+		}, "thinker prompt"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -115,6 +124,7 @@ func TestSaveLoad(t *testing.T) {
 	s.Pattern = loop.ThinkActEvaluator
 	s.Runtime = Host
 	s.Rounds = 3
+	s.Thinkers = 5
 	exec := s.Agents[backend.Executor]
 	exec.Backend, exec.Model, exec.System = "codex", "gpt-5", "be brief"
 	s.Agents[backend.Executor] = exec
@@ -129,7 +139,7 @@ func TestSaveLoad(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got.Pattern != s.Pattern || got.Runtime != s.Runtime || got.Rounds != 3 {
+	if got.Pattern != s.Pattern || got.Runtime != s.Runtime || got.Rounds != 3 || got.Thinkers != 5 {
 		t.Errorf("loaded %+v", got)
 	}
 	for _, role := range Roles {
@@ -142,7 +152,7 @@ func TestSaveLoad(t *testing.T) {
 func TestLoadDefaults(t *testing.T) {
 	folder := t.TempDir()
 	s, err := Load(folder)
-	if err != nil || s.Pattern != loop.ThinkAct || len(s.Agents) != len(Roles) {
+	if err != nil || s.Pattern != loop.ThinkAct || s.Thinkers != DefaultThinkers || len(s.Agents) != len(Roles) {
 		t.Errorf("Load of a new folder = %+v, %v", s, err)
 	}
 	// Unknown roles and missing fields are ignored.

@@ -10,6 +10,7 @@ import (
 	"syscall"
 
 	"github.com/changkun/ralph/internal/git"
+	"github.com/changkun/ralph/internal/loop"
 )
 
 // ErrNotRepo reports that a folder is not in a git repository.
@@ -25,14 +26,14 @@ func engineLogPath(folder string) string { return filepath.Join(folder, LocalDir
 // Engine runs a session on folder with its saved settings until the process
 // is interrupted or terminated, printing progress to out. It is what the
 // process Launch starts runs. Unlike Run, it does not make folder a git
-// repository: the desktop app leaves that to the user.
+// repository: the desktop app leaves that to the user. Thinkers need none.
 func Engine(folder string, out io.Writer) error {
-	if !git.IsRepo(folder) {
-		return ErrNotRepo
-	}
 	s, err := Load(folder)
 	if err != nil {
 		return err
+	}
+	if s.Pattern != loop.Thinkers && !git.IsRepo(folder) {
+		return ErrNotRepo
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
