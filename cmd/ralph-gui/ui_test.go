@@ -293,7 +293,7 @@ func TestFollow(t *testing.T) {
 	if len(u.entries) != 400 || !u.entries[0].first || !u.entries[399].last {
 		t.Fatalf("console entries = %d; want one per line", len(u.entries))
 	}
-	// Lists learn their scroll range in a frame for the events after it.
+	// The scroller takes scrolling once a frame has placed it.
 	now := time.Now()
 	for range 3 {
 		frameAt(t, u, now)
@@ -322,55 +322,97 @@ func TestFollow(t *testing.T) {
 		t.Errorf("following = %v, position = %+v; want to stop following", u.following, l.Position)
 	}
 
-	// Scrolling back to the end follows again, and scrolling past it
-	// stretches the list, which then springs back.
+	// Scrolling back to the end follows again.
+	s := &u.entryScroll
 	scroll(u, 1000, 500, 1000)
 	frameAt(t, u, now)
-	if !u.following || u.entryElastic.offset != 0 {
-		t.Errorf("following = %v, position = %+v, elastic offset = %v; want to follow again", u.following, l.Position, u.entryElastic.offset)
+	if !u.following || l.Position.BeforeEnd || s.y != 0 {
+		t.Errorf("following = %v, position = %+v, stretch = %v; want to follow", u.following, l.Position, s.y)
 	}
-	frameAt(t, u, now)
+
+	// Scrolling past the end stretches the content, less and less.
 	scroll(u, 1000, 500, 100)
 	frameAt(t, u, now)
-	if u.entryElastic.offset >= 0 {
-		t.Errorf("elastic offset = %v; want the list pulled up", u.entryElastic.offset)
+	y := s.y
+	if y <= 0 || y >= 100 {
+		t.Errorf("stretch = %v; want less than the 100 scrolled", y)
 	}
+	scroll(u, 1000, 500, 100)
+	frameAt(t, u, now)
+	if s.y <= y || s.y-y >= y {
+		t.Errorf("stretch = %v after %v; want it a little further", s.y, y)
+	}
+
+	// Scrolling back first undoes the stretch.
+	position, y := l.Position, s.y
+	scroll(u, 1000, 500, -20)
+	frameAt(t, u, now)
+	if s.y >= y || l.Position.First != position.First || l.Position.Offset != position.Offset {
+		t.Errorf("stretch = %v after %v, position = %+v; want less stretch, the list still", s.y, y, l.Position)
+	}
+
+	// Once the scrolling stops, the stretch springs back.
 	for i := range 40 {
 		frameAt(t, u, now.Add(time.Second+time.Duration(i)*16*time.Millisecond))
 	}
-	if u.entryElastic.offset != 0 {
-		t.Errorf("elastic offset = %v; want it back at 0", u.entryElastic.offset)
+	if s.y != 0 || s.v != 0 {
+		t.Errorf("stretch = %v, velocity = %v; want them back at 0", s.y, s.v)
+	}
+
+	// Reaching the end at speed bounces, and the rest of that scroll is
+	// ignored.
+	now = now.Add(2 * time.Second)
+	frameAt(t, u, now)
+	peak := float32(0)
+	for i := 1; i <= 40; i++ {
+		if i <= 10 {
+			scroll(u, 1000, 500, 80)
+		}
+		frameAt(t, u, now.Add(time.Duration(i)*16*time.Millisecond))
+		peak = max(peak, s.y)
+	}
+	if !s.bouncing || peak <= 0 || peak > 100 || s.y != 0 {
+		t.Errorf("bouncing = %v, peak = %v, stretch = %v; want a bounce that settled", s.bouncing, peak, s.y)
 	}
 
 	// Short content starts at the top.
+	now = now.Add(time.Second)
 	write(t, filepath.Join(folder, session.LocalDir, "engine.log"), "one line\n")
-	u.showView(viewConsole)
 	u.poll()
 	for range 2 {
-		frame(t, u)
+		frameAt(t, u, now)
 	}
 	if l.ScrollToEnd || !atTop() {
 		t.Errorf("scroll to end = %v, position = %+v; want the top", l.ScrollToEnd, l.Position)
+	}
+
+	// Pulling it down, even from below the content, stretches it.
+	scroll(u, 1000, 600, -100)
+	frameAt(t, u, now)
+	if s.y >= 0 {
+		t.Errorf("stretch = %v; want the content pulled down", s.y)
 	}
 
 	// Once it no longer fits, the view moves to its end.
 	write(t, filepath.Join(folder, session.LocalDir, "engine.log"), "one line\n"+log.String())
 	u.poll()
 	for range 2 {
-		frame(t, u)
+		frameAt(t, u, now)
 	}
 	if !u.following || l.Position.BeforeEnd || atTop() {
 		t.Errorf("following = %v, position = %+v; want the end", u.following, l.Position)
 	}
-	write(t, filepath.Join(folder, session.LocalDir, "engine.log"), "one line\n")
-	u.poll()
-	for range 3 {
-		frame(t, u)
-	}
-	scroll(u, 1000, 500, -100)
-	frame(t, u)
-	if u.entryElastic.offset <= 0 {
-		t.Errorf("elastic offset = %v; want the list pulled down", u.entryElastic.offset)
+}
+
+func TestStretch(t *testing.T) {
+	for _, x := range []float32{-500, -1, 0, 1, 50, 300, 5000} {
+		y := stretch(x, 800)
+		if abs32(y) > abs32(x) || abs32(y) >= 800 || (x != 0 && (y > 0) != (x > 0)) {
+			t.Errorf("stretch(%v) = %v", x, y)
+		}
+		if back := unstretch(y, 800); abs32(back-x) > 0.01*max(1, abs32(x)) {
+			t.Errorf("unstretch(stretch(%v)) = %v", x, back)
+		}
 	}
 }
 
