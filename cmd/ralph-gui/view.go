@@ -57,6 +57,7 @@ var roleColors = map[backend.Role]color.NRGBA{
 	backend.Executor:   rgb(0x1264a3),
 	backend.Evaluator:  rgb(0x007a5a),
 	backend.Archivist:  rgb(0xa0522d),
+	backend.Thinker:    rgb(0xb83280),
 }
 
 const (
@@ -239,7 +240,7 @@ func (u *UI) layoutSidebar(gtx C) D {
 		u.heading("Pattern"),
 		u.enabled(func(gtx C) D {
 			var children []layout.FlexChild
-			for _, p := range loop.Patterns {
+			for _, p := range session.Patterns {
 				children = append(children, layout.Rigid(material.RadioButton(u.th, &u.pattern, string(p), string(p)).Layout))
 			}
 			return layout.Flex{Axis: layout.Vertical}.Layout(gtx, children...)
@@ -268,8 +269,10 @@ func (u *UI) layoutControls(gtx C) D {
 	if bad {
 		statusColor = danger
 	}
-	start := "Start"
-	if u.finished > 0 {
+	start, count, noun := "Start", "for", "rounds"
+	if u.thinking() {
+		count, noun = "with", "thinkers"
+	} else if u.finished > 0 {
 		start = "Continue"
 	}
 	children := []layout.FlexChild{
@@ -277,21 +280,24 @@ func (u *UI) layoutControls(gtx C) D {
 		layout.Rigid(func(gtx C) D {
 			return layout.Flex{Alignment: layout.Middle}.Layout(gtx,
 				layout.Rigid(func(gtx C) D {
-					if active || u.folder == "" || !u.isRepo {
+					if active || u.folder == "" || !u.isRepo && !u.thinking() {
 						gtx = gtx.Disabled()
 					}
 					return u.button(gtx, &u.startBtn, start, go_)
 				}),
 				layout.Rigid(space(10)),
-				layout.Rigid(u.text(15, ink, "for").Layout),
+				layout.Rigid(u.text(15, ink, count).Layout),
 				layout.Rigid(space(8)),
 				layout.Rigid(u.enabled(func(gtx C) D {
 					gtx.Constraints.Min.X = gtx.Dp(64)
 					gtx.Constraints.Max.X = gtx.Dp(64)
+					if u.thinking() {
+						return u.editor(gtx, &u.thinkers, "", false)
+					}
 					return u.editor(gtx, &u.rounds, "all", false)
 				})),
 				layout.Rigid(space(8)),
-				layout.Rigid(u.text(15, ink, "rounds").Layout),
+				layout.Rigid(u.text(15, ink, noun).Layout),
 				layout.Flexed(1, space(8)),
 				layout.Rigid(func(gtx C) D {
 					if !active {
@@ -307,7 +313,7 @@ func (u *UI) layoutControls(gtx C) D {
 		children = append(children, layout.Rigid(u.text(14, muted, u.roundsText()).Layout), layout.Rigid(space(4)))
 	}
 	children = append(children, layout.Rigid(u.text(15, statusColor, status).Layout))
-	if u.folder != "" && !u.isRepo {
+	if u.folder != "" && !u.isRepo && !u.thinking() {
 		children = append(children, layout.Rigid(space(10)),
 			layout.Rigid(func(gtx C) D {
 				gtx.Constraints.Min.X = 0
@@ -326,8 +332,20 @@ func (u *UI) layoutControls(gtx C) D {
 	return layout.Flex{Axis: layout.Vertical}.Layout(gtx, children...)
 }
 
-// roundsText says which rounds a start runs.
+// roundsText says which rounds, or which thinkers, a start runs.
 func (u *UI) roundsText() string {
+	if u.thinking() {
+		n, _ := strconv.Atoi(u.thinkers.Text())
+		switch {
+		case n < 1 || n > session.MaxThinkers:
+			return ""
+		case n == 1:
+			return fmt.Sprintf("Runs thinker %d, alone in a new empty folder, %s, and a container of its own.",
+				u.finished+1, session.ThinkerFolder(u.finished+1))
+		}
+		return fmt.Sprintf("Runs thinkers %d to %d side by side, each alone in a new empty folder, %s to %s, and a container of its own.",
+			u.finished+1, u.finished+n, session.ThinkerFolder(u.finished+1), session.ThinkerFolder(u.finished+n))
+	}
 	n, _ := strconv.Atoi(u.rounds.Text())
 	switch {
 	case n == 0:
@@ -350,8 +368,11 @@ func (u *UI) layoutLogins(gtx C) D {
 		return layout.Inset{Top: 6}.Layout(gtx,
 			u.text(14, muted, "Agents run directly on this machine, with the CLIs' own logins and permissions.").Layout)
 	}
-	children := []layout.FlexChild{layout.Rigid(
-		u.text(14, muted, "Agents run in a new container that sees only the project folder.").Layout)}
+	where := "Agents run in a new container that sees only the project folder."
+	if u.thinking() {
+		where = "Each thinker runs in a new container that sees only its own folder."
+	}
+	children := []layout.FlexChild{layout.Rigid(u.text(14, muted, where).Layout)}
 	for _, l := range u.logins {
 		dot, txt := go_, fmt.Sprintf("%s logs in with %s.", backendTitle(l.Backend), strings.Join(l.Found, ", "))
 		if len(l.Found) == 0 {
@@ -434,14 +455,18 @@ func (u *UI) layoutTurns(gtx C) D {
 		case !ok:
 			markColor = danger
 		}
-		item := func(gtx C) D { return u.layoutTurnItem(gtx, i, roleTitle(t.Role), mark, markColor, roleColors[t.Role]) }
-		if i > firstTurnView && u.turns[i-firstTurnView-1].Round == t.Round {
+		item := func(gtx C) D { return u.layoutTurnItem(gtx, i, turnTitle(t), mark, markColor, roleColors[t.Role]) }
+		// Turns are grouped by round, and thinkers all together.
+		group := fmt.Sprintf("Round %d", t.Round)
+		if t.Role == backend.Thinker {
+			group = "Thinkers"
+		}
+		if i > firstTurnView && (t.Role == backend.Thinker || u.turns[i-firstTurnView-1].Round == t.Round) {
 			return item(gtx)
 		}
 		return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
 			layout.Rigid(func(gtx C) D {
-				return layout.Inset{Left: 18, Top: 16, Bottom: 4}.Layout(gtx,
-					u.bold(13, muted, fmt.Sprintf("Round %d", t.Round)).Layout)
+				return layout.Inset{Left: 18, Top: 16, Bottom: 4}.Layout(gtx, u.bold(13, muted, group).Layout)
 			}),
 			layout.Rigid(item),
 		)
@@ -479,21 +504,15 @@ func (u *UI) layoutTurnItem(gtx C, i int, title, mark string, markColor, dot col
 
 func (u *UI) layoutPane(gtx C) D {
 	title, subtitle := "Live", fmt.Sprintf("The latest %d rounds, as they happen", liveRounds)
+	if u.thinking() {
+		subtitle = "Every thinker, and what it concluded"
+	}
 	switch {
 	case u.view == viewConsole:
 		title, subtitle = "Console", "What the session printed"
 	case u.view >= firstTurnView && u.view-firstTurnView < len(u.turns):
 		t := u.turns[u.view-firstTurnView]
-		title = roleTitle(t.Role)
-		_, ok, running := u.turnState(t)
-		switch {
-		case running:
-			subtitle = fmt.Sprintf("Round %d · in progress", t.Round)
-		case ok:
-			subtitle = fmt.Sprintf("Round %d · done", t.Round)
-		default:
-			subtitle = fmt.Sprintf("Round %d · did not finish", t.Round)
-		}
+		title, subtitle = turnTitle(t), u.turnSubtitle(t)
 	}
 	return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
 		layout.Rigid(func(gtx C) D {
@@ -624,16 +643,40 @@ func (u *UI) layoutConsoleLine(gtx C, e entry) D {
 	})
 }
 
+// turnTitle names a turn by its role, or a thinker by its number.
+func turnTitle(t session.TurnLog) string {
+	if t.Role == backend.Thinker {
+		return fmt.Sprintf("Thinker %d", t.Round)
+	}
+	return roleTitle(t.Role)
+}
+
+// turnSubtitle says how a turn went, and in which round.
+func (u *UI) turnSubtitle(t session.TurnLog) string {
+	_, ok, running := u.turnState(t)
+	state := "done"
+	switch {
+	case running:
+		state = "in progress"
+	case !ok:
+		state = "did not finish"
+	}
+	if t.Role == backend.Thinker {
+		return upperFirst(state)
+	}
+	return fmt.Sprintf("Round %d · %s", t.Round, state)
+}
+
 // layoutTurnHeading lays out a turn's heading, as Slack shows who wrote a
 // message: an avatar, the role's name, and the round.
 func (u *UI) layoutTurnHeading(gtx C, t session.TurnLog) D {
 	mark, ok, running := u.turnState(t)
-	markColor, state := go_, "done"
+	markColor := go_
 	switch {
 	case running:
-		markColor, state = accent, "in progress"
+		markColor = accent
 	case !ok:
-		markColor, state = danger, "did not finish"
+		markColor = danger
 	}
 	return layout.Flex{Alignment: layout.Middle}.Layout(gtx,
 		layout.Rigid(func(gtx C) D {
@@ -644,9 +687,9 @@ func (u *UI) layoutTurnHeading(gtx C, t session.TurnLog) D {
 			return layout.Center.Layout(gtx, u.bold(16, white, strings.ToUpper(string(t.Role)[:1])).Layout)
 		}),
 		layout.Rigid(space(12)),
-		layout.Rigid(u.bold(15, ink, roleTitle(t.Role)).Layout),
+		layout.Rigid(u.bold(15, ink, turnTitle(t)).Layout),
 		layout.Rigid(space(8)),
-		layout.Rigid(u.text(13, muted, fmt.Sprintf("Round %d · %s", t.Round, state)).Layout),
+		layout.Rigid(u.text(13, muted, u.turnSubtitle(t)).Layout),
 		layout.Rigid(space(6)),
 		layout.Rigid(u.symbol(12, markColor, mark).Layout),
 	)
