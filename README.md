@@ -87,7 +87,7 @@ On Linux, Podman maps your user to the agents' user, so files they create belong
 
 `ralph-gui` runs sessions like `ralph` does, with settings for each role and a live view of the agents' work:
 
-1. Choose a project folder, which must be a git repository. If it is not one, the app says so and Start stays disabled until you run `git init` in it.
+1. Choose a project folder, which must be a git repository. If it is not one, the app says so and Start stays disabled until you run `git init` in it. Started without a folder, the app reopens the last one, or if there is none, asks for one.
 2. Choose where agents run (Podman, Docker, or this machine) and the pattern.
 3. For each role in the pattern, choose Claude Code or Codex and a model, and edit its system prompt and prompt if you like. Prompts are Go templates; Reset restores the built-in ones.
 4. Press Start, after setting how many rounds it runs if you like; left empty, the session runs until you stop it. Once rounds have finished, the button reads Continue and runs that many more. The app checks the settings and logins, then runs the session in a background process, so it keeps running if you quit the app; open the folder again to follow it. Stop ends it.
